@@ -1,29 +1,63 @@
+"""
+TTS — ElevenLabs (primary) with gTTS fallback.
+Voice: Adam — deep male, documentary quality (same as InVideo).
+"""
+
 import asyncio
 import os
 import subprocess
 from pathlib import Path
+
 from storage.local import narration_path
+
+# ElevenLabs "Adam" — deep documentary male voice
+_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")
+_API_KEY   = os.getenv("ELEVENLABS_API_KEY", "")
+
+
+def _elevenlabs_sync(text: str, out: Path) -> None:
+    from elevenlabs.client import ElevenLabs
+    client = ElevenLabs(api_key=_API_KEY)
+    audio = client.text_to_speech.convert(
+        voice_id=_VOICE_ID,
+        text=text,
+        model_id="eleven_multilingual_v2",
+        voice_settings={
+            "stability": 0.45,
+            "similarity_boost": 0.80,
+            "style": 0.35,
+            "use_speaker_boost": True,
+        },
+    )
+    with open(str(out), "wb") as f:
+        for chunk in audio:
+            f.write(chunk)
+
+
+def _gtts_sync(text: str, out: Path) -> None:
+    from gtts import gTTS
+    tmp = out.with_suffix(".tmp.mp3")
+    gTTS(text=text, lang="en", tld="co.uk", slow=False).save(str(tmp))
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(tmp),
+        "-af", "equalizer=f=150:width_type=o:width=2:g=4,compand=attacks=0.1:decays=0.3:points=-80/-80|-45/-45|-27/-25|0/-10|20/-7",
+        "-ar", "22050", "-b:a", "128k", str(out),
+    ], check=True, capture_output=True)
+    tmp.unlink(missing_ok=True)
 
 
 async def synthesize(narration: str, job_id: str) -> Path:
     out = narration_path(job_id)
     loop = asyncio.get_event_loop()
 
-    def _run():
-        from gtts import gTTS
-        tts = gTTS(text=narration, lang="en", tld="co.uk", slow=False)
-        mp3 = out.with_suffix(".tmp.mp3")
-        tts.save(str(mp3))
-        # Bass boost + slight compression to reduce robotic feel
-        subprocess.run([
-            "ffmpeg", "-y", "-i", str(mp3),
-            "-af", "equalizer=f=150:width_type=o:width=2:g=4,compand=attacks=0.1:decays=0.3:points=-80/-80|-45/-45|-27/-25|0/-10|20/-7",
-            "-ar", "22050", "-b:a", "128k",
-            str(out)
-        ], check=True, capture_output=True)
-        mp3.unlink(missing_ok=True)
+    if _API_KEY:
+        try:
+            await loop.run_in_executor(None, _elevenlabs_sync, narration, out)
+            return out
+        except Exception as e:
+            print(f"ElevenLabs failed ({e}), falling back to gTTS")
 
-    await loop.run_in_executor(None, _run)
+    await loop.run_in_executor(None, _gtts_sync, narration, out)
     return out
 
 

@@ -7,7 +7,8 @@ pydantic==2.9.2
 # ── Script generation (Groq — free tier) ─────────────────────────────────────
 groq==0.11.0
 
-# ── TTS (gTTS — HTTP, no download, no auth) ───────────────────────────────────
+# ── TTS (ElevenLabs primary + gTTS fallback) ──────────────────────────────────
+elevenlabs==1.13.0
 gTTS==2.5.3
 huggingface-hub==0.24.6
 
