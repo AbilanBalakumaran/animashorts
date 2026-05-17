@@ -209,8 +209,8 @@ def _render_sync(scenes: list[Scene], audio: Path,
     return final
 
 
-async def render(scenes, audio, script, req, bgm, job_id) -> Path:
+async def render(scenes, audio_path, script, req, bgm_path, job_id) -> Path:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        None, _render_sync, scenes, audio, req, bgm, job_id
+        None, _render_sync, scenes, audio_path, req, bgm_path, job_id
     )
