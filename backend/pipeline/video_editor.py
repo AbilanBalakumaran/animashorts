@@ -145,7 +145,8 @@ def _add_audio(video: Path, audio: Path, out: Path) -> None:
         "-y", "-i", str(video), "-i", str(audio),
         "-map", "0:v", "-map", "1:a",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-shortest", str(out),
+        "-shortest", "-movflags", "+faststart",
+        str(out),
     ], "add-audio")
 
 
@@ -155,7 +156,10 @@ def _mix_bgm(video: Path, bgm: Optional[Path], out: Path,
         if subtitles and srt and srt.exists():
             _burn_subs(video, srt, out)
             return
-        _ffmpeg(["-y", "-i", str(video), "-c", "copy", str(out)], "copy-no-bgm")
+        _ffmpeg([
+            "-y", "-i", str(video), "-c", "copy",
+            "-movflags", "+faststart", str(out),
+        ], "copy-no-bgm")
         return
 
     result = subprocess.run(
@@ -183,6 +187,7 @@ def _mix_bgm(video: Path, bgm: Optional[Path], out: Path,
         "-map", "0:v", "-map", "[aout]",
         "-c:v", "libx264" if vf else "copy",
         "-c:a", "aac", "-b:a", "192k", "-shortest",
+        "-movflags", "+faststart",
     ]
     if vf:
         cmd += ["-vf", vf]
@@ -198,6 +203,11 @@ def _burn_subs(video: Path, srt: Path, out: Path) -> None:
     _ffmpeg(["-y", "-i", str(video), "-vf", vf, "-c:a", "copy", str(out)], "burn-subs")
 
 
+def _check(path: Path, label: str) -> None:
+    if not path.exists() or path.stat().st_size < 1024:
+        raise RuntimeError(f"Pipeline step produced empty/missing file: {label} ({path})")
+
+
 def _render_sync(scenes: list[Scene], audio: Path,
                  req: GenerateRequest, bgm: Optional[Path], job_id: str) -> Path:
     from storage.local import job_dir
@@ -209,6 +219,7 @@ def _render_sync(scenes: list[Scene], audio: Path,
         _prepare_image(scene.image_path, img)
         clip = d / f"clip_{i:02d}.mp4"
         _scene_to_clip(img, scene.duration_s, i, clip)
+        _check(clip, f"clip {i}")
         clips.append(clip)
 
     raw   = d / "raw_video.mp4"
@@ -216,10 +227,13 @@ def _render_sync(scenes: list[Scene], audio: Path,
     final = output_video_path(job_id)
 
     _concat_clips(clips, raw)
+    _check(raw, "concat")
     _add_audio(raw, audio, mixed)
+    _check(mixed, "add-audio")
 
     srt_path = subtitles_path(job_id) if req.subtitles else None
     _mix_bgm(mixed, bgm, final, req.subtitles, srt_path)
+    _check(final, "final video")
 
     for p in clips + [raw, mixed]:
         p.unlink(missing_ok=True)
