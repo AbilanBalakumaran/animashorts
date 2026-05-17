@@ -43,7 +43,7 @@ export default function PromptForm() {
         duration_seconds: duration,
         subtitles,
       });
-      router.push(`/generate/${job_id}`);
+      router.push(`/generate?id=${job_id}`);
     } catch (err: any) {
       setError(err.message || "Failed to start generation");
       setLoading(false);
