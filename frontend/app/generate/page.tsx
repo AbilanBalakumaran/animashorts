@@ -8,15 +8,33 @@ import { getJobStatus, type JobStatus } from "@/lib/api";
 import ProgressTracker from "@/components/ProgressTracker";
 import VideoPlayer from "@/components/VideoPlayer";
 
+function registerBackgroundWatch(jobId: string) {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.ready.then((reg) => {
+    if (reg.active) {
+      reg.active.postMessage({
+        type: "WATCH_JOB",
+        jobId,
+        apiBase: window.location.origin,
+      });
+    }
+  });
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+}
+
 function GenerateContent() {
   const searchParams = useSearchParams();
   const jobId = searchParams.get("id") || "";
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [error, setError] = useState("");
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const watchedRef = useRef(false);
 
   useEffect(() => {
     if (!jobId) return;
+
     async function poll() {
       try {
         const data = await getJobStatus(jobId);
@@ -29,8 +47,16 @@ function GenerateContent() {
         if (intervalRef.current) clearInterval(intervalRef.current);
       }
     }
+
     poll();
     intervalRef.current = setInterval(poll, 2000);
+
+    // Register background watch once
+    if (!watchedRef.current) {
+      watchedRef.current = true;
+      registerBackgroundWatch(jobId);
+    }
+
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [jobId]);
 
@@ -41,14 +67,18 @@ function GenerateContent() {
       <div className="relative z-10 max-w-lg mx-auto px-4 py-16">
         <div className="flex items-center justify-between mb-10">
           <Link href="/" className="text-sm text-white/40 hover:text-white/70 transition-colors">← New Video</Link>
-          <Link href="/gallery" className="text-sm text-white/40 hover:text-white/70 transition-colors">Gallery →</Link>
+          <Link href="/gallery" className="text-sm text-white/40 hover:text-white/70 transition-colors">History →</Link>
         </div>
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 text-xs text-white/30 font-mono bg-white/5 border border-white/10 px-3 py-1 rounded-full">
             Job: {jobId.slice(0, 8)}…
           </div>
         </div>
-        {error && <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300 mb-6">{error}</div>}
+        {error && (
+          <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300 mb-6">
+            {error}
+          </div>
+        )}
         {!status && !error && (
           <div className="flex flex-col items-center gap-4 py-16 text-white/40">
             <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }} className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent" />
@@ -57,7 +87,14 @@ function GenerateContent() {
         )}
         {status && status.step !== "done" && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl bg-white/[0.04] border border-white/10 p-6 sm:p-8 backdrop-blur-sm">
-            <h2 className="text-xl font-bold text-white mb-6 text-center">{status.step === "error" ? "Generation Failed" : "Generating your short…"}</h2>
+            <h2 className="text-xl font-bold text-white mb-6 text-center">
+              {status.step === "error" ? "Generation Failed" : "Generating your short…"}
+            </h2>
+            {status.step !== "error" && (
+              <p className="text-xs text-white/30 text-center mb-6">
+                You can close this tab — we&apos;ll notify you when it&apos;s ready.
+              </p>
+            )}
             <ProgressTracker status={status} />
           </motion.div>
         )}
@@ -65,9 +102,14 @@ function GenerateContent() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-white mb-1">Your short is ready!</h2>
-              <p className="text-white/40 text-sm">Tap play, download, or share directly to TikTok</p>
+              <p className="text-white/40 text-sm">Download or share directly to TikTok / Reels</p>
             </div>
             <VideoPlayer jobId={jobId} outputUrl={status.output_url} />
+            <div className="text-center">
+              <Link href="/gallery" className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+                View all your videos →
+              </Link>
+            </div>
           </motion.div>
         )}
       </div>

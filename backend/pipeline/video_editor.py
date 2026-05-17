@@ -53,37 +53,44 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Render one scene with subtle zoom.
-    Even idx → slow zoom-in  (1.0 → 1.04)
-    Odd idx  → slow dezoom   (1.04 → 1.0)
-    Light horizontal drift (2% width) alternates direction for life.
-    No per-clip fade here — xfade handles all transitions.
+    Subtle zoom via scale+crop (10x faster than zoompan).
+    Scale image to 104%, then animate crop position for drift.
     """
     frames = max(int(dur * FPS), 2)
-    d = str(frames)
+    f = str(frames)
 
-    if idx % 2 == 0:   # zoom in
-        z = f"1+{ZOOM_AMT}*(on-1)/max({d}-1,1)"
-    else:               # dezoom
-        z = f"{1+ZOOM_AMT}-{ZOOM_AMT}*(on-1)/max({d}-1,1)"
+    # Scale to 104% — headroom for drift
+    sw = int(VIDEO_W * (1 + ZOOM_AMT)) | 1  # ensure odd → make even
+    sh = int(VIDEO_H * (1 + ZOOM_AMT)) | 1
+    sw = sw + (sw % 2)
+    sh = sh + (sh % 2)
+    mx = sw - VIDEO_W   # pixels of drift available
+    my = sh - VIDEO_H
 
-    drift = 0.02
-    if idx % 3 == 0:
-        x = f"iw/2-(iw/zoom/2)+(iw*{drift})*(on-1)/max({d}-1,1)"
-    elif idx % 3 == 1:
-        x = f"iw/2-(iw/zoom/2)-(iw*{drift})*(on-1)/max({d}-1,1)"
+    # Alternate: even=zoom-in drift, odd=dezoom drift
+    if idx % 2 == 0:
+        prog = f"n/max({f}-1,1)"   # 0→1
     else:
-        x = "iw/2-(iw/zoom/2)"
+        prog = f"1-n/max({f}-1,1)"  # 1→0
 
-    y = "ih/2-(ih/zoom/2)"
-    vf = f"zoompan=z='{z}':x='{x}':y='{y}':d={d}:fps={FPS}:s={VIDEO_W}x{VIDEO_H}"
+    if idx % 3 == 0:
+        x = f"({mx})*{prog}"
+    elif idx % 3 == 1:
+        x = f"({mx})*(1-{prog})"
+    else:
+        x = str(mx // 2)
+
+    y = str(my // 2)
+
+    vf = f"scale={sw}:{sh},crop={VIDEO_W}:{VIDEO_H}:x='{x}':y='{y}'"
 
     _ffmpeg([
         "-y", "-loop", "1", "-framerate", str(FPS), "-i", str(img),
         "-vf", vf,
         "-t", str(dur),
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-an",
+        "-threads", "0",
         str(out),
     ], f"scene {idx}")
 
