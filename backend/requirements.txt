@@ -7,9 +7,8 @@ pydantic==2.9.2
 # ── Script generation (Groq — free tier) ─────────────────────────────────────
 groq==0.11.0
 
-# ── TTS (Kokoro-82M ONNX — offline, documentary-quality voice, no API key) ───
-kokoro-onnx==0.4.1
-soundfile==0.12.1
+# ── TTS (Piper — offline, no API key, public models) ─────────────────────────
+piper-tts==1.2.0
 huggingface-hub==0.24.6
 
 # ── Image generation (HuggingFace Inference API — free tier) ─────────────────

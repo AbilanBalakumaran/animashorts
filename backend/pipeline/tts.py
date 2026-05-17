@@ -1,38 +1,62 @@
 """
-TTS — Kokoro-82M ONNX (offline, no API key, documentary-quality voice).
-Voice: am_adam — deep American male, perfect for anime documentary narration.
+TTS — Piper (offline, no API key, no auth needed).
+Voice: en_US-ryan-high — deep male American English, documentary quality.
+Models downloaded from public HuggingFace dataset (rhasspy/piper-voices).
 """
 
 import asyncio
 import os
+import subprocess
+import wave
 from pathlib import Path
 
 from storage.local import narration_path
 
-VOICE = os.getenv("TTS_VOICE", "am_adam")   # deep male documentary voice
+VOICE_NAME = os.getenv("TTS_VOICE", "en_US-ryan-high")
 SPEED = float(os.getenv("TTS_SPEED", "0.92"))  # slightly slower = more cinematic
 
-_kokoro = None
+_voice = None
 
 
-def _get_kokoro():
-    global _kokoro
-    if _kokoro is None:
-        from kokoro_onnx import Kokoro
+def _get_voice():
+    global _voice
+    if _voice is None:
         from huggingface_hub import hf_hub_download
-        model_path  = hf_hub_download("hexgrad/Kokoro-82M-ONNX", "kokoro-v1.0.onnx")
-        voices_path = hf_hub_download("hexgrad/Kokoro-82M-ONNX", "voices-v1.0.bin")
-        _kokoro = Kokoro(model_path, voices_path)
-    return _kokoro
+        from piper.voice import PiperVoice
+
+        base = f"en/en_US/ryan/high/{VOICE_NAME}"
+        model_path = hf_hub_download(
+            repo_id="rhasspy/piper-voices",
+            filename=f"{base}.onnx",
+            repo_type="dataset",
+        )
+        config_path = hf_hub_download(
+            repo_id="rhasspy/piper-voices",
+            filename=f"{base}.onnx.json",
+            repo_type="dataset",
+        )
+        _voice = PiperVoice.load(model_path, config_path=config_path, use_cuda=False)
+    return _voice
 
 
 def _synthesize_sync(text: str, out_path: Path) -> None:
-    import numpy as np
-    import soundfile as sf
+    voice = _get_voice()
+    wav_path = out_path.with_suffix(".wav")
 
-    kokoro = _get_kokoro()
-    samples, sr = kokoro.create(text, voice=VOICE, speed=SPEED, lang="en-us")
-    sf.write(str(out_path), samples, sr)
+    with wave.open(str(wav_path), "w") as wf:
+        voice.synthesize(
+            text,
+            wf,
+            length_scale=1.0 / SPEED,  # length_scale > 1 = slower
+        )
+
+    # Convert WAV → MP3 with ffmpeg (already installed)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame",
+         "-b:a", "128k", str(out_path)],
+        check=True, capture_output=True,
+    )
+    wav_path.unlink(missing_ok=True)
 
 
 async def synthesize(narration: str, job_id: str) -> Path:
