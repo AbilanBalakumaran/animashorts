@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
   async rewrites() {
     // En local : pointe vers localhost:8000
     // En production Vercel : les rewrites viennent de vercel.json (pas besoin d'apiUrl)
