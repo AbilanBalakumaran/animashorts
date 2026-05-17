@@ -1,6 +1,9 @@
 """
-Video rendering — pure FFmpeg.
-Alternating subtle zoom-in / dezoom (1.04x) + xfade crossfade transitions.
+Video rendering — PIL-driven Ken Burns + FFmpeg mux.
+Each scene is rendered frame-by-frame in Python (zoom-in / dezoom alternating),
+piped as rawvideo to FFmpeg for H.264 encoding.
+No dynamic FFmpeg filter expressions → no zoompan / crop reinit issues.
+Clips are concatenated with hard cuts (no crossfade).
 """
 
 import asyncio
@@ -15,24 +18,14 @@ from models.job import GenerateRequest
 from models.scene import Scene, ScriptOutput
 from storage.local import output_video_path, subtitles_path
 
-VIDEO_W   = int(os.getenv("VIDEO_WIDTH",  1080))
-VIDEO_H   = int(os.getenv("VIDEO_HEIGHT", 1920))
-FPS       = int(os.getenv("VIDEO_FPS",    24))
-BGM_VOL   = 0.12
-XFADE_DUR = 0.4    # crossfade duration in seconds
-ZOOM_AMT  = 0.04   # max zoom delta — subtle (1.0 ↔ 1.04)
-
-# Padded dimensions for Ken Burns headroom (must be even for H.264)
-_PAD_W = VIDEO_W + int(VIDEO_W * ZOOM_AMT)
-_PAD_W += _PAD_W % 2
-_PAD_H = VIDEO_H + int(VIDEO_H * ZOOM_AMT)
-_PAD_H += _PAD_H % 2
-_DW = _PAD_W - VIDEO_W   # pixel headroom width  (≈44)
-_DH = _PAD_H - VIDEO_H   # pixel headroom height (≈76)
+VIDEO_W  = int(os.getenv("VIDEO_WIDTH",  1080))
+VIDEO_H  = int(os.getenv("VIDEO_HEIGHT", 1920))
+FPS      = int(os.getenv("VIDEO_FPS",    24))
+BGM_VOL  = 0.12
+ZOOM_AMT = 0.05   # 5% zoom range — visually clear but still subtle
 
 
 def _ffmpeg(args: list[str], label: str = "") -> None:
-    """Run FFmpeg, raise with readable stderr on failure."""
     result = subprocess.run(["ffmpeg"] + args, capture_output=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -42,7 +35,7 @@ def _ffmpeg(args: list[str], label: str = "") -> None:
 
 
 def _prepare_image(src: Optional[str], dest: Path) -> None:
-    """Crop to 9:16 and resize to target resolution."""
+    """Crop to 9:16, resize to VIDEO_W × VIDEO_H."""
     if not src or not Path(src).exists():
         img = Image.new("RGB", (VIDEO_W, VIDEO_H), (10, 10, 20))
     else:
@@ -59,70 +52,94 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
     img.save(str(dest), "JPEG", quality=92)
 
 
-def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
+def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Ken Burns pan — scale to padded size (constant 1.04x zoom baked in),
-    then animate a fixed VIDEO_W x VIDEO_H crop window with x driven by `n`.
+    Render one scene with progressive Ken Burns zoom via PIL frame loop.
+    Even scenes  → zoom-in  (camera moves closer over the clip)
+    Odd  scenes  → dezoom   (camera pulls back over the clip)
 
-    -t on the INPUT caps the loop; -vframes is the secondary stop.
-    Fixed crop w/h = output dimensions never change = no reinit.
-    Even scenes pan left→right, odd scenes pan right→left.
+    Strategy: upscale the image to (1+ZOOM_AMT)× so we always have extra
+    pixels, then animate the crop window from wide→tight or tight→wide,
+    downscaling each crop to VIDEO_W×VIDEO_H. Pure downscale = sharp frames.
     """
     frames = max(int(dur * FPS), 2)
-    step   = round(_DW / max(frames - 1, 1), 4)
 
-    if idx % 2 == 0:
-        x_expr = f"n*{step}"
-    else:
-        x_expr = f"{_DW}-n*{step}"
+    # Source image at padded size (always downsample → sharp)
+    pad_w = VIDEO_W + int(VIDEO_W * ZOOM_AMT * 2)
+    pad_h = VIDEO_H + int(VIDEO_H * ZOOM_AMT * 2)
+    pad_w += pad_w % 2
+    pad_h += pad_h % 2
 
-    vf = (
-        f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
-        f"crop=w={VIDEO_W}:h={VIDEO_H}:x={x_expr}:y={_DH // 2}"
+    src = Image.open(str(img_path)).convert("RGB").resize(
+        (pad_w, pad_h), Image.LANCZOS
     )
 
-    _ffmpeg([
-        "-y",
-        "-loop", "1", "-t", f"{dur + 0.5}", "-framerate", str(FPS), "-i", str(img),
-        "-vf", vf,
-        "-vframes", str(frames),
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-an",
-        "-threads", "0",
-        str(out),
-    ], f"scene {idx}")
+    proc = subprocess.Popen(
+        [
+            "ffmpeg", "-y",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
+            "-s", f"{VIDEO_W}x{VIDEO_H}",
+            "-pix_fmt", "rgb24",
+            "-r", str(FPS),
+            "-i", "pipe:0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-an",
+            "-threads", "0",
+            str(out),
+        ],
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        for n in range(frames):
+            t = n / max(frames - 1, 1)   # 0.0 → 1.0
+
+            if idx % 2 == 0:
+                # Zoom-in: wide crop (pad_w×pad_h) → tight crop (VIDEO_W×VIDEO_H)
+                cw = int(pad_w - (pad_w - VIDEO_W) * t)
+                ch = int(pad_h - (pad_h - VIDEO_H) * t)
+            else:
+                # Dezoom: tight crop (VIDEO_W×VIDEO_H) → wide crop (pad_w×pad_h)
+                cw = int(VIDEO_W + (pad_w - VIDEO_W) * t)
+                ch = int(VIDEO_H + (pad_h - VIDEO_H) * t)
+
+            x = (pad_w - cw) // 2
+            y = (pad_h - ch) // 2
+
+            frame = src.crop((x, y, x + cw, y + ch)).resize(
+                (VIDEO_W, VIDEO_H), Image.BILINEAR
+            )
+            proc.stdin.write(frame.tobytes())
+
+    finally:
+        proc.stdin.close()
+
+    _, stderr = proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"FFmpeg failed (scene {idx}): {stderr.decode(errors='replace')[-800:]}"
+        )
 
 
-def _concat_xfade(clips: list[Path], durations: list[float], out: Path) -> None:
-    """Concatenate clips with smooth xfade crossfade."""
+def _concat_clips(clips: list[Path], out: Path) -> None:
+    """Hard-cut concatenation — no transitions."""
     if len(clips) == 1:
         _ffmpeg(["-y", "-i", str(clips[0]), "-c", "copy", str(out)], "concat-single")
         return
 
-    inputs = []
-    for p in clips:
-        inputs += ["-i", str(p)]
-
-    parts = []
-    offset = 0.0
-    prev = "[0:v]"
-
-    for i in range(1, len(clips)):
-        offset += durations[i - 1] - XFADE_DUR
-        label = f"[xf{i}]" if i < len(clips) - 1 else "[outv]"
-        parts.append(
-            f"{prev}[{i}:v]xfade=transition=fade:duration={XFADE_DUR}:offset={offset:.3f}{label}"
-        )
-        prev = f"[xf{i}]"
-
+    list_file = out.parent / "concat_list.txt"
+    list_file.write_text(
+        "\n".join(f"file '{p.as_posix()}'" for p in clips),
+        encoding="utf-8",
+    )
     _ffmpeg([
-        "-y", *inputs,
-        "-filter_complex", ";".join(parts),
-        "-map", "[outv]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-        "-pix_fmt", "yuv420p",
+        "-y", "-f", "concat", "-safe", "0",
+        "-i", str(list_file),
+        "-c", "copy",
         str(out),
-    ], "xfade-concat")
+    ], "concat")
+    list_file.unlink(missing_ok=True)
 
 
 def _add_audio(video: Path, audio: Path, out: Path) -> None:
@@ -188,7 +205,6 @@ def _render_sync(scenes: list[Scene], audio: Path,
     from storage.local import job_dir
     d = job_dir(job_id)
     clips: list[Path] = []
-    durations: list[float] = []
 
     for i, scene in enumerate(scenes):
         img = d / f"prep_{i:02d}.jpg"
@@ -196,13 +212,12 @@ def _render_sync(scenes: list[Scene], audio: Path,
         clip = d / f"clip_{i:02d}.mp4"
         _scene_to_clip(img, scene.duration_s, i, clip)
         clips.append(clip)
-        durations.append(scene.duration_s)
 
     raw   = d / "raw_video.mp4"
     mixed = d / "with_audio.mp4"
     final = output_video_path(job_id)
 
-    _concat_xfade(clips, durations, raw)
+    _concat_clips(clips, raw)
     _add_audio(raw, audio, mixed)
 
     srt_path = subtitles_path(job_id) if req.subtitles else None
