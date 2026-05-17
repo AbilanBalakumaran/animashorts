@@ -22,6 +22,14 @@ BGM_VOL   = 0.12
 XFADE_DUR = 0.4    # crossfade duration in seconds
 ZOOM_AMT  = 0.04   # max zoom delta — subtle (1.0 ↔ 1.04)
 
+# Padded dimensions for Ken Burns headroom (must be even for H.264)
+_PAD_W = VIDEO_W + int(VIDEO_W * ZOOM_AMT)
+_PAD_W += _PAD_W % 2
+_PAD_H = VIDEO_H + int(VIDEO_H * ZOOM_AMT)
+_PAD_H += _PAD_H % 2
+_DW = _PAD_W - VIDEO_W   # pixel headroom width  (≈44)
+_DH = _PAD_H - VIDEO_H   # pixel headroom height (≈76)
+
 
 def _ffmpeg(args: list[str], label: str = "") -> None:
     """Run FFmpeg, raise with readable stderr on failure."""
@@ -53,26 +61,33 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Ken Burns — slow zoom-in / dezoom alternating per scene.
-    Uses -vframes (not -t) so FFmpeg never hangs on looped input.
-    Single quotes around expressions tell FFmpeg's parser that internal
-    commas are not filter separators.
+    Ken Burns via crop+scale with FFmpeg's `t` timestamp variable.
+    Avoids zoompan (version-sensitive, prone to config errors).
+    Scale to _PAD_W x _PAD_H first, then animate the crop window,
+    then scale back to target. No commas inside expressions = no quoting issues.
+
+    Even scenes  → zoom-in  (crop shrinks toward centre)
+    Odd  scenes  → dezoom   (crop grows from centre)
     """
     frames = max(int(dur * FPS), 2)
-    rate   = round(ZOOM_AMT / max(frames - 1, 1), 8)
+    d = f"{dur:.4f}"  # dur as string literal in the expression
 
     if idx % 2 == 0:
-        z_expr = f"'min(1.0+n*{rate},{1.0 + ZOOM_AMT})'"   # zoom-in
+        # Zoom-in: large crop at t=0, small crop at t=dur
+        vf = (
+            f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
+            f"crop=w={_PAD_W}-{_DW}*t/{d}:h={_PAD_H}-{_DH}*t/{d}"
+            f":x={_DW}*t/2/{d}:y={_DH}*t/2/{d},"
+            f"scale={VIDEO_W}:{VIDEO_H}"
+        )
     else:
-        z_expr = f"'max({1.0 + ZOOM_AMT}-n*{rate},1.0)'"   # dezoom
-
-    vf = (
-        f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
-        f"crop={VIDEO_W}:{VIDEO_H},"
-        f"zoompan=z={z_expr}"
-        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d=1:s={VIDEO_W}x{VIDEO_H}:fps={FPS}"
-    )
+        # Dezoom: small crop at t=0, large crop at t=dur
+        vf = (
+            f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
+            f"crop=w={VIDEO_W}+{_DW}*t/{d}:h={VIDEO_H}+{_DH}*t/{d}"
+            f":x={_DW}/2-{_DW}*t/2/{d}:y={_DH}/2-{_DH}*t/2/{d},"
+            f"scale={VIDEO_W}:{VIDEO_H}"
+        )
 
     _ffmpeg([
         "-y",
