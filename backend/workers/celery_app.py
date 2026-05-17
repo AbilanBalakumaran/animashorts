@@ -1,22 +1,23 @@
 import os
+import ssl
 from celery import Celery
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Upstash rediss:// requires ssl_cert_reqs parameter
-def _fix_redis_url(url: str) -> str:
+
+def _broker_url(url: str) -> str:
     if url.startswith("rediss://") and "ssl_cert_reqs" not in url:
         sep = "&" if "?" in url else "?"
         return f"{url}{sep}ssl_cert_reqs=CERT_NONE"
     return url
 
-BROKER_URL = _fix_redis_url(REDIS_URL)
-BACKEND_URL = _fix_redis_url(REDIS_URL)
+
+_SSL_OPTS = {"ssl_cert_reqs": ssl.CERT_NONE} if REDIS_URL.startswith("rediss://") else {}
 
 celery_app = Celery(
     "animashorts",
-    broker=BROKER_URL,
-    backend=BACKEND_URL,
+    broker=_broker_url(REDIS_URL),
+    backend=_broker_url(REDIS_URL),
     include=["pipeline.orchestrator"],
 )
 
@@ -33,6 +34,6 @@ celery_app.conf.update(
         "pipeline.orchestrator.run_pipeline": {"queue": "video_pipeline"},
     },
     result_expires=86400,
-    broker_use_ssl={"ssl_cert_reqs": "CERT_NONE"},
-    redis_backend_use_ssl={"ssl_cert_reqs": "CERT_NONE"},
+    broker_connection_retry_on_startup=True,
+    **({"broker_use_ssl": _SSL_OPTS, "redis_backend_use_ssl": _SSL_OPTS} if _SSL_OPTS else {}),
 )

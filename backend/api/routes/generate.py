@@ -11,6 +11,21 @@ from storage.local import job_dir
 router = APIRouter()
 
 ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_IMAGE_BYTES = 20 * 1024 * 1024   # 20 MB per image
+MAX_TOTAL_BYTES = 150 * 1024 * 1024  # 150 MB total
+# JPEG/PNG/WebP magic bytes
+_MAGIC = {
+    b"\xff\xd8\xff": "image/jpeg",
+    b"\x89PNG":      "image/png",
+    b"RIFF":         "image/webp",  # WebP starts with RIFF
+}
+
+
+def _validate_image_bytes(data: bytes) -> bool:
+    for magic in _MAGIC:
+        if data[:len(magic)] == magic:
+            return True
+    return False
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -31,12 +46,24 @@ async def generate_video(
     d = job_dir(status.job_id)
 
     image_paths: list[str] = []
+    total_bytes = 0
+
     for i, img in enumerate(images):
-        suffix = Path(img.filename or "").suffix.lower() or ".jpg"
+        data = await img.read()
+        total_bytes += len(data)
+
+        if len(data) > MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=400, detail=f"Image {i+1} exceeds 20 MB limit")
+        if total_bytes > MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=400, detail="Total upload size exceeds 150 MB")
+        if not _validate_image_bytes(data):
+            raise HTTPException(status_code=400, detail=f"File {i+1} is not a valid image")
+
+        suffix = Path(img.filename or "").suffix.lower()
         if suffix not in ALLOWED_SUFFIXES:
             suffix = ".jpg"
         dest = d / f"upload_{i:02d}{suffix}"
-        dest.write_bytes(await img.read())
+        dest.write_bytes(data)
         image_paths.append(str(dest))
 
     req = GenerateRequest(

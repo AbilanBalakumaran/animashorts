@@ -5,11 +5,11 @@ import { clsx } from "clsx";
 import type { JobStatus } from "@/lib/api";
 
 const STEPS = [
-  { key: "script",  label: "Writing Script",    icon: "📝" },
-  { key: "tts",     label: "Voice Generation",  icon: "🎙️" },
-  { key: "images",  label: "Anime Visuals",      icon: "🎨" },
-  { key: "render",  label: "Rendering Video",   icon: "🎬" },
-  { key: "done",    label: "Complete",           icon: "✅" },
+  { key: "script",  label: "Writing Narration",  icon: "📝" },
+  { key: "tts",     label: "Voice Generation",   icon: "🎙️" },
+  { key: "images",  label: "Preparing Images",   icon: "🖼️" },
+  { key: "render",  label: "Rendering Video",    icon: "🎬" },
+  { key: "done",    label: "Complete",            icon: "✅" },
 ];
 
 function stepIndex(step: string) {

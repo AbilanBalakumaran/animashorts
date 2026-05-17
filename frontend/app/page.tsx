@@ -61,9 +61,9 @@ export default function HomePage() {
           </h1>
 
           <p className="text-lg text-white/50 max-w-md mx-auto leading-relaxed">
-            Turn any anime topic into a fully edited{" "}
+            Upload your images, write your prompt — get a fully edited{" "}
             <span className="text-white/80">TikTok-ready vertical short</span> with AI narration,
-            cinematic visuals, and dynamic music.
+            smooth zoom effects, and dynamic music.
           </p>
 
           {/* Stats row */}
@@ -116,10 +116,10 @@ export default function HomePage() {
         >
           {[
             "🎙️ AI Voice-over",
-            "🎨 Anime Visuals",
-            "🎬 Ken Burns Effects",
+            "🖼️ Your Own Images",
+            "🎬 Smooth Zoom Effects",
             "🎵 Auto Music",
-            "⚡ Transitions",
+            "⚡ Crossfade Transitions",
             "📱 TikTok Ready",
           ].map((feat) => (
             <span

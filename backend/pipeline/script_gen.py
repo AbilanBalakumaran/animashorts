@@ -1,6 +1,5 @@
 """
-Script generation — uses Groq (free tier).
-Model: llama-3.3-70b-versatile
+Script generation — Groq free tier (llama-3.3-70b-versatile).
 Generates narration + scene timing for user-uploaded images.
 """
 
@@ -39,16 +38,33 @@ def _parse_response(text: str, duration: int, image_paths: list[str]) -> ScriptO
     data = json.loads(text)
 
     scenes_raw = data.get("scenes", [])
-    # Assign uploaded image paths to scenes
-    scenes = []
-    for i, s in enumerate(scenes_raw):
-        img = image_paths[i] if i < len(image_paths) else None
-        scenes.append(Scene(
+    num_images = len(image_paths)
+
+    # Guard: always produce exactly one scene per image
+    if len(scenes_raw) < num_images:
+        # Pad missing scenes by splitting duration equally
+        per_scene = duration / num_images
+        while len(scenes_raw) < num_images:
+            scenes_raw.append({
+                "id": len(scenes_raw) + 1,
+                "duration_s": per_scene,
+                "mood": data.get("mood", "calm"),
+            })
+    elif len(scenes_raw) > num_images:
+        # Merge excess scenes into last one
+        excess_duration = sum(s.get("duration_s", 0) for s in scenes_raw[num_images:])
+        scenes_raw = scenes_raw[:num_images]
+        scenes_raw[-1]["duration_s"] = scenes_raw[-1].get("duration_s", 0) + excess_duration
+
+    scenes = [
+        Scene(
             id=s.get("id", i + 1),
-            duration_s=float(s.get("duration_s", duration / max(len(scenes_raw), 1))),
+            duration_s=max(float(s.get("duration_s", duration / num_images)), 1.0),
             mood=s.get("mood", "calm"),
-            image_path=img,
-        ))
+            image_path=image_paths[i],
+        )
+        for i, s in enumerate(scenes_raw)
+    ]
 
     return ScriptOutput(
         narration=data["narration"],

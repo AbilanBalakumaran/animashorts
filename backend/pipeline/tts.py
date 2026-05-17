@@ -1,7 +1,6 @@
 """
-TTS — Piper (offline, no API key, no auth needed).
-Voice: en_US-ryan-high — deep male American English, documentary quality.
-Models downloaded from public HuggingFace dataset (rhasspy/piper-voices).
+TTS — Piper (offline, no API key, documentary-quality male voice).
+Model: en_US-ryan-high — deep American male, perfect for anime narration.
 """
 
 import asyncio
@@ -12,8 +11,10 @@ from pathlib import Path
 
 from storage.local import narration_path
 
-VOICE_NAME = os.getenv("TTS_VOICE", "en_US-ryan-high")
-SPEED = float(os.getenv("TTS_SPEED", "0.92"))  # slightly slower = more cinematic
+_SPEED = float(os.getenv("TTS_SPEED", "0.92"))
+
+# Piper voice config — fully defined here, no env ambiguity
+_VOICE_REPO_PATH = "en/en_US/ryan/high/en_US-ryan-high"
 
 _voice = None
 
@@ -24,18 +25,17 @@ def _get_voice():
         from huggingface_hub import hf_hub_download
         from piper.voice import PiperVoice
 
-        base = f"en/en_US/ryan/high/{VOICE_NAME}"
-        model_path = hf_hub_download(
+        model = hf_hub_download(
             repo_id="rhasspy/piper-voices",
-            filename=f"{base}.onnx",
+            filename=f"{_VOICE_REPO_PATH}.onnx",
             repo_type="dataset",
         )
-        config_path = hf_hub_download(
+        config = hf_hub_download(
             repo_id="rhasspy/piper-voices",
-            filename=f"{base}.onnx.json",
+            filename=f"{_VOICE_REPO_PATH}.onnx.json",
             repo_type="dataset",
         )
-        _voice = PiperVoice.load(model_path, config_path=config_path, use_cuda=False)
+        _voice = PiperVoice.load(model, config_path=config, use_cuda=False)
     return _voice
 
 
@@ -47,13 +47,14 @@ def _synthesize_sync(text: str, out_path: Path) -> None:
         voice.synthesize(
             text,
             wf,
-            length_scale=1.0 / SPEED,  # length_scale > 1 = slower
+            length_scale=round(1.0 / _SPEED, 3),  # >1 = slower
         )
 
-    # Convert WAV → MP3 with ffmpeg (already installed)
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame",
-         "-b:a", "128k", str(out_path)],
+        ["ffmpeg", "-y", "-i", str(wav_path),
+         "-codec:a", "libmp3lame", "-b:a", "128k",
+         "-ar", "22050",   # reduce sample rate → smaller file
+         str(out_path)],
         check=True, capture_output=True,
     )
     wav_path.unlink(missing_ok=True)
@@ -73,7 +74,9 @@ async def get_word_timestamps(audio_path: Path) -> list[dict]:
 
         def _run():
             model = WhisperModel("tiny", device="cpu", compute_type="int8")
-            segments, _ = model.transcribe(str(audio_path), word_timestamps=True, language="en")
+            segments, _ = model.transcribe(
+                str(audio_path), word_timestamps=True, language="en"
+            )
             words = []
             for seg in segments:
                 if seg.words:
