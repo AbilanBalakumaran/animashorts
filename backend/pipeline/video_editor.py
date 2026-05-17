@@ -54,25 +54,46 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Ken Burns via zoompan — single input frame + d=N tells zoompan to produce
-    exactly N output frames from one still image. No -loop, no s= param,
-    no commas in expressions. `on` = output-frame counter within d duration.
-    Falls back to static clip if zoompan is unavailable on this FFmpeg build.
+    Ken Burns: zoompan with 4 alternating patterns (zoom + pan direction).
+    Single input frame + d=N → zoompan emits exactly N frames, no -loop.
+    No s= / fps= params, no commas in expressions — safe on any FFmpeg build.
+
+    x formula (iw-iw/zoom)*progress is self-clamping: at zoom=1.0 it equals
+    0, so x is always within valid bounds regardless of zoom level.
+
+    Falls back to static clip if zoompan fails.
     """
     frames = max(int(dur * FPS), 2)
-    rate   = round(ZOOM_AMT / max(frames - 1, 1), 8)
+    fm1    = max(frames - 1, 1)
+    rate   = round(ZOOM_AMT / fm1, 8)
+    zm     = round(1.0 + ZOOM_AMT, 4)
 
-    if idx % 2 == 0:
-        z_expr = f"1.0+on*{rate}"          # zoom-in  1.0 → 1.05
+    pattern = idx % 4
+    if pattern == 0:
+        # zoom-in + pan left→right
+        z_expr = f"1.0+on*{rate}"
+        x_expr = f"(iw-iw/zoom)*on/{fm1}"
+        y_expr = "ih/2-ih/zoom/2"
+    elif pattern == 1:
+        # dezoom + pan right→left
+        z_expr = f"{zm}-on*{rate}"
+        x_expr = f"(iw-iw/zoom)*({fm1}-on)/{fm1}"
+        y_expr = "ih/2-ih/zoom/2"
+    elif pattern == 2:
+        # zoom-in + pan right→left
+        z_expr = f"1.0+on*{rate}"
+        x_expr = f"(iw-iw/zoom)*({fm1}-on)/{fm1}"
+        y_expr = "ih/4"
     else:
-        z_expr = f"{1.0 + ZOOM_AMT}-on*{rate}"  # dezoom 1.05 → 1.0
+        # dezoom + pan left→right
+        z_expr = f"{zm}-on*{rate}"
+        x_expr = f"(iw-iw/zoom)*on/{fm1}"
+        y_expr = "ih/4"
 
     vf_zoom = (
         f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
         f"crop={VIDEO_W}:{VIDEO_H},"
-        f"zoompan=z={z_expr}"
-        f":x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2)"
-        f":d={frames}"
+        f"zoompan=z={z_expr}:x={x_expr}:y={y_expr}:d={frames}"
     )
     vf_static = (
         f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
@@ -84,7 +105,6 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
         "-pix_fmt", "yuv420p", "-an", "-threads", "0", str(out),
     ]
 
-    # Try zoompan first (pure FFmpeg, fast); fall back to static on error
     try:
         _ffmpeg([
             "-y", "-framerate", str(FPS), "-i", str(img_path),
