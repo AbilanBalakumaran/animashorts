@@ -53,41 +53,21 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Subtle zoom via scale+crop (10x faster than zoompan).
-    Scale image to 104%, then animate crop position for drift.
+    Fast static clip per scene — xfade handles all visual transitions.
+    Static encoding is near-instant vs any per-frame filter.
     """
     frames = max(int(dur * FPS), 2)
-    f = str(frames)
 
-    # Scale to 104% — headroom for drift
-    sw = int(VIDEO_W * (1 + ZOOM_AMT)) | 1  # ensure odd → make even
-    sh = int(VIDEO_H * (1 + ZOOM_AMT)) | 1
-    sw = sw + (sw % 2)
-    sh = sh + (sh % 2)
-    mx = sw - VIDEO_W   # pixels of drift available
-    my = sh - VIDEO_H
-
-    # Alternate: even=zoom-in drift, odd=dezoom drift
-    if idx % 2 == 0:
-        prog = f"n/max({f}-1,1)"   # 0→1
-    else:
-        prog = f"1-n/max({f}-1,1)"  # 1→0
-
-    if idx % 3 == 0:
-        x = f"({mx})*{prog}"
-    elif idx % 3 == 1:
-        x = f"({mx})*(1-{prog})"
-    else:
-        x = str(mx // 2)
-
-    y = str(my // 2)
-
-    vf = f"scale={sw}:{sh},crop={VIDEO_W}:{VIDEO_H}:x='{x}':y='{y}'"
+    vf = (
+        f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
+        f"crop={VIDEO_W}:{VIDEO_H}"
+    )
 
     _ffmpeg([
-        "-y", "-loop", "1", "-framerate", str(FPS), "-i", str(img),
+        "-y",
+        "-loop", "1", "-framerate", str(FPS), "-i", str(img),
         "-vf", vf,
-        "-t", str(dur),
+        "-vframes", str(frames),
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-an",
         "-threads", "0",
