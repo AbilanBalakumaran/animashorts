@@ -5,11 +5,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from api.routes import generate, jobs, videos
 
-
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./outputs"))
+FRONTEND_DIR = Path("./static_frontend")
 
 
 @asynccontextmanager
@@ -20,18 +21,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AnimaShorts AI",
-    description="AI-powered anime short video generator",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://frontend:3000",
-        os.getenv("FRONTEND_URL", ""),
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,3 +44,8 @@ app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# Sert le frontend Next.js statique pour toutes les autres routes
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

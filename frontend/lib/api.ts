@@ -24,7 +24,11 @@ export interface VideoItem {
   size_mb: number;
 }
 
-const BASE = "/api";
+// En production HF Spaces : même URL que le site
+// En local : localhost:8000
+const BASE = typeof window !== "undefined"
+  ? `${window.location.origin}/api`
+  : "http://localhost:8000/api";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
