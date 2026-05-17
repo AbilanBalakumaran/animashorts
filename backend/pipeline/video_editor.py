@@ -54,17 +54,14 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Render one scene with progressive Ken Burns zoom via PIL frame loop.
-    Even scenes  → zoom-in  (camera moves closer over the clip)
-    Odd  scenes  → dezoom   (camera pulls back over the clip)
-
-    Strategy: upscale the image to (1+ZOOM_AMT)× so we always have extra
-    pixels, then animate the crop window from wide→tight or tight→wide,
-    downscaling each crop to VIDEO_W×VIDEO_H. Pure downscale = sharp frames.
+    Ken Burns via JPEG frame sequence — PIL writes each frame to disk,
+    FFmpeg encodes from the sequence. No stdin pipe = no BrokenPipeError.
+    Even scenes zoom-in, odd scenes dezoom.
     """
+    import shutil
+
     frames = max(int(dur * FPS), 2)
 
-    # Source image at padded size (always downsample → sharp)
     pad_w = VIDEO_W + int(VIDEO_W * ZOOM_AMT * 2)
     pad_h = VIDEO_H + int(VIDEO_H * ZOOM_AMT * 2)
     pad_w += pad_w % 2
@@ -74,26 +71,11 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
         (pad_w, pad_h), Image.LANCZOS
     )
 
-    proc = subprocess.Popen(
-        [
-            "ffmpeg", "-y",
-            "-f", "rawvideo", "-vcodec", "rawvideo",
-            "-s", f"{VIDEO_W}x{VIDEO_H}",
-            "-pix_fmt", "rgb24",
-            "-r", str(FPS),
-            "-i", "pipe:0",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-an",
-            "-threads", "0",
-            str(out),
-        ],
-        stdin=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
+    frames_dir = out.parent / f"frames_{idx:02d}"
+    frames_dir.mkdir(exist_ok=True)
     try:
         for n in range(frames):
-            t = n / max(frames - 1, 1)   # 0.0 → 1.0
+            t = n / max(frames - 1, 1)
 
             if idx % 2 == 0:
                 cw = int(pad_w - (pad_w - VIDEO_W) * t)
@@ -108,22 +90,19 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
             frame = src.crop((x, y, x + cw, y + ch)).resize(
                 (VIDEO_W, VIDEO_H), Image.BILINEAR
             )
-            try:
-                proc.stdin.write(frame.tobytes())
-            except (BrokenPipeError, OSError):
-                break  # FFmpeg closed stdin (likely an error) — stop feeding
+            frame.save(str(frames_dir / f"f{n:05d}.jpg"), "JPEG", quality=85)
 
+        _ffmpeg([
+            "-y",
+            "-framerate", str(FPS),
+            "-i", str(frames_dir / "f%05d.jpg"),
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-an",
+            "-threads", "0",
+            str(out),
+        ], f"scene {idx}")
     finally:
-        try:
-            proc.stdin.close()
-        except OSError:
-            pass
-
-    _, stderr = proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"FFmpeg failed (scene {idx}): {stderr.decode(errors='replace')[-800:]}"
-        )
+        shutil.rmtree(str(frames_dir), ignore_errors=True)
 
 
 def _concat_clips(clips: list[Path], out: Path) -> None:
