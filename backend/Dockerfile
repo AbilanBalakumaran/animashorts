@@ -13,9 +13,6 @@ COPY . .
 
 RUN mkdir -p /app/outputs /app/assets/music
 
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-
 EXPOSE 8000
 
-CMD ["/start.sh"]
+CMD ["sh", "-c", "celery -A workers.celery_app worker --loglevel=info --concurrency=1 -Q video_pipeline & uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
