@@ -101,7 +101,8 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
     )
 
     base_args = [
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-profile:v", "main", "-level", "4.0",
         "-pix_fmt", "yuv420p", "-an", "-threads", "0", str(out),
     ]
 
@@ -185,12 +186,17 @@ def _mix_bgm(video: Path, bgm: Optional[Path], out: Path,
         "-filter_complex",
         f"[1:a]volume={BGM_VOL},atrim=0:{dur}[bgm];[0:a][bgm]amix=inputs=2:duration=first[aout]",
         "-map", "0:v", "-map", "[aout]",
-        "-c:v", "libx264" if vf else "copy",
         "-c:a", "aac", "-b:a", "192k", "-shortest",
         "-movflags", "+faststart",
     ]
     if vf:
-        cmd += ["-vf", vf]
+        cmd += [
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
+            "-vf", vf,
+        ]
+    else:
+        cmd += ["-c:v", "copy"]
     cmd.append(str(out))
     _ffmpeg(cmd, "mix-bgm")
 
@@ -200,7 +206,12 @@ def _burn_subs(video: Path, srt: Path, out: Path) -> None:
     vf = (f"subtitles='{se}':force_style='"
           "FontSize=48,FontName=Arial,PrimaryColour=&H00FFFFFF,"
           "OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2'")
-    _ffmpeg(["-y", "-i", str(video), "-vf", vf, "-c:a", "copy", str(out)], "burn-subs")
+    _ffmpeg([
+        "-y", "-i", str(video), "-vf", vf,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", "-movflags", "+faststart", str(out),
+    ], "burn-subs")
 
 
 def _check(path: Path, label: str) -> None:

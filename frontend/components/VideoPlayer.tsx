@@ -10,6 +10,7 @@ interface Props {
 
 export default function VideoPlayer({ jobId, outputUrl }: Props) {
   const [copied, setCopied] = useState(false);
+  const [videoError, setVideoError] = useState(false);
 
   async function copyLink() {
     await navigator.clipboard.writeText(window.location.href);
@@ -17,6 +18,7 @@ export default function VideoPlayer({ jobId, outputUrl }: Props) {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  const streamUrl = `/api/stream/${jobId}`;
   const downloadUrl = `/api/download/${jobId}`;
 
   return (
@@ -30,14 +32,27 @@ export default function VideoPlayer({ jobId, outputUrl }: Props) {
       <div className="relative mx-auto rounded-2xl overflow-hidden bg-black border border-white/10 shadow-2xl shadow-cyan-500/10"
            style={{ maxWidth: 360 }}>
         <div style={{ paddingBottom: "177.78%" }} />
-        <video
-          src={outputUrl}
-          controls
-          autoPlay
-          loop
-          playsInline
-          className="absolute inset-0 w-full h-full object-contain"
-        />
+        {videoError ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/50 text-sm p-4 text-center">
+            <span className="text-3xl">🎬</span>
+            <p>Preview not available — download to watch</p>
+            <a href={downloadUrl} download
+               className="px-4 py-2 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-xs hover:bg-cyan-500/30 transition-colors">
+              Download MP4
+            </a>
+          </div>
+        ) : (
+          <video
+            key={streamUrl}
+            src={streamUrl}
+            controls
+            loop
+            playsInline
+            preload="metadata"
+            className="absolute inset-0 w-full h-full object-contain"
+            onError={() => setVideoError(true)}
+          />
+        )}
       </div>
 
       {/* Action buttons */}

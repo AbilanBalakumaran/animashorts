@@ -34,8 +34,7 @@ def cleanup_job(job_id: str) -> None:
 
 
 def output_url(job_id: str) -> str:
-    # En production Railway, PUBLIC_API_URL est défini → URL absolue pour le téléphone
     base = os.getenv("PUBLIC_API_URL", "")
     if base:
-        return f"{base.rstrip('/')}/outputs/{job_id}/final_short.mp4"
-    return f"/outputs/{job_id}/final_short.mp4"
+        return f"{base.rstrip('/')}/api/stream/{job_id}"
+    return f"/api/stream/{job_id}"
