@@ -8,7 +8,7 @@ interface Props {
   outputUrl: string;
 }
 
-export default function VideoPlayer({ jobId, outputUrl }: Props) {
+export default function VideoPlayer({ jobId }: Props) {
   const [copied, setCopied] = useState(false);
   const [videoError, setVideoError] = useState(false);
 
