@@ -1,0 +1,35 @@
+# Environment
+.env
+.env.local
+
+# Outputs / generated media
+outputs/
+*.mp4
+*.mp3
+*.wav
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+frontend/.next/
+frontend/out/
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

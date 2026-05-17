@@ -1,0 +1,8 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+startCommand = "celery -A workers.celery_app worker --loglevel=info --concurrency=1 -Q video_pipeline"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
