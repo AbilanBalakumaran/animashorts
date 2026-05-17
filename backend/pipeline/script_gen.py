@@ -64,16 +64,20 @@ async def _describe_image(client: AsyncGroq, image_path: str) -> str:
 
 def _build_user_prompt(req: GenerateRequest, descriptions: list[str]) -> str:
     hint = f"\nNarration hint: {req.script_hint}" if req.script_hint else ""
-    img_lines = "\n".join(
-        f"  Image {i + 1}: {d}" for i, d in enumerate(descriptions)
+    n = len(descriptions)
+    mapping_lines = "\n".join(
+        f"  Scene {i + 1} narration → MUST be about → Image {i + 1}: {d}"
+        for i, d in enumerate(descriptions)
     )
     return (
         f"Topic: {req.topic}{hint}\n"
         f"Target duration: {req.duration_seconds} seconds\n"
-        f"num_images: {len(descriptions)}\n\n"
-        f"WHAT IS IN EACH IMAGE (your narration must match these):\n{img_lines}\n\n"
-        "Generate the script JSON now. "
-        "Each scene's narration_segment MUST relate to its corresponding image description."
+        f"num_images: {n}\n\n"
+        f"MANDATORY SCENE-TO-IMAGE MAPPING (Scene N = Image N, no exceptions):\n"
+        f"{mapping_lines}\n\n"
+        f"Generate exactly {n} scenes. "
+        f"Scene 1 narration describes Image 1. Scene 2 narration describes Image 2. "
+        f"And so on — do NOT swap or reorder."
     )
 
 
