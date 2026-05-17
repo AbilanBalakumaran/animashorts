@@ -96,11 +96,9 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
             t = n / max(frames - 1, 1)   # 0.0 → 1.0
 
             if idx % 2 == 0:
-                # Zoom-in: wide crop (pad_w×pad_h) → tight crop (VIDEO_W×VIDEO_H)
                 cw = int(pad_w - (pad_w - VIDEO_W) * t)
                 ch = int(pad_h - (pad_h - VIDEO_H) * t)
             else:
-                # Dezoom: tight crop (VIDEO_W×VIDEO_H) → wide crop (pad_w×pad_h)
                 cw = int(VIDEO_W + (pad_w - VIDEO_W) * t)
                 ch = int(VIDEO_H + (pad_h - VIDEO_H) * t)
 
@@ -110,10 +108,16 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
             frame = src.crop((x, y, x + cw, y + ch)).resize(
                 (VIDEO_W, VIDEO_H), Image.BILINEAR
             )
-            proc.stdin.write(frame.tobytes())
+            try:
+                proc.stdin.write(frame.tobytes())
+            except (BrokenPipeError, OSError):
+                break  # FFmpeg closed stdin (likely an error) — stop feeding
 
     finally:
-        proc.stdin.close()
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
 
     _, stderr = proc.communicate()
     if proc.returncode != 0:
