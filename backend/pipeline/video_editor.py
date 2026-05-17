@@ -54,55 +54,50 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Ken Burns via JPEG frame sequence — PIL writes each frame to disk,
-    FFmpeg encodes from the sequence. No stdin pipe = no BrokenPipeError.
-    Even scenes zoom-in, odd scenes dezoom.
+    Ken Burns via zoompan — single input frame + d=N tells zoompan to produce
+    exactly N output frames from one still image. No -loop, no s= param,
+    no commas in expressions. `on` = output-frame counter within d duration.
+    Falls back to static clip if zoompan is unavailable on this FFmpeg build.
     """
-    import shutil
-
     frames = max(int(dur * FPS), 2)
+    rate   = round(ZOOM_AMT / max(frames - 1, 1), 8)
 
-    pad_w = VIDEO_W + int(VIDEO_W * ZOOM_AMT * 2)
-    pad_h = VIDEO_H + int(VIDEO_H * ZOOM_AMT * 2)
-    pad_w += pad_w % 2
-    pad_h += pad_h % 2
+    if idx % 2 == 0:
+        z_expr = f"1.0+on*{rate}"          # zoom-in  1.0 → 1.05
+    else:
+        z_expr = f"{1.0 + ZOOM_AMT}-on*{rate}"  # dezoom 1.05 → 1.0
 
-    src = Image.open(str(img_path)).convert("RGB").resize(
-        (pad_w, pad_h), Image.LANCZOS
+    vf_zoom = (
+        f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
+        f"crop={VIDEO_W}:{VIDEO_H},"
+        f"zoompan=z={z_expr}"
+        f":x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2)"
+        f":d={frames}"
+    )
+    vf_static = (
+        f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
+        f"crop={VIDEO_W}:{VIDEO_H}"
     )
 
-    frames_dir = out.parent / f"frames_{idx:02d}"
-    frames_dir.mkdir(exist_ok=True)
+    base_args = [
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-an", "-threads", "0", str(out),
+    ]
+
+    # Try zoompan first (pure FFmpeg, fast); fall back to static on error
     try:
-        for n in range(frames):
-            t = n / max(frames - 1, 1)
-
-            if idx % 2 == 0:
-                cw = int(pad_w - (pad_w - VIDEO_W) * t)
-                ch = int(pad_h - (pad_h - VIDEO_H) * t)
-            else:
-                cw = int(VIDEO_W + (pad_w - VIDEO_W) * t)
-                ch = int(VIDEO_H + (pad_h - VIDEO_H) * t)
-
-            x = (pad_w - cw) // 2
-            y = (pad_h - ch) // 2
-
-            frame = src.crop((x, y, x + cw, y + ch)).resize(
-                (VIDEO_W, VIDEO_H), Image.BILINEAR
-            )
-            frame.save(str(frames_dir / f"f{n:05d}.jpg"), "JPEG", quality=85)
-
         _ffmpeg([
-            "-y",
-            "-framerate", str(FPS),
-            "-i", str(frames_dir / "f%05d.jpg"),
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-an",
-            "-threads", "0",
-            str(out),
-        ], f"scene {idx}")
-    finally:
-        shutil.rmtree(str(frames_dir), ignore_errors=True)
+            "-y", "-framerate", str(FPS), "-i", str(img_path),
+            "-vf", vf_zoom, "-vframes", str(frames),
+            *base_args,
+        ], f"scene {idx} zoom")
+    except RuntimeError:
+        _ffmpeg([
+            "-y", "-loop", "1", "-t", f"{dur + 0.2}",
+            "-framerate", str(FPS), "-i", str(img_path),
+            "-vf", vf_static, "-vframes", str(frames),
+            *base_args,
+        ], f"scene {idx} static")
 
 
 def _concat_clips(clips: list[Path], out: Path) -> None:
