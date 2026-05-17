@@ -25,16 +25,11 @@ def _get_voice():
         from huggingface_hub import hf_hub_download
         from piper.voice import PiperVoice
 
-        model = hf_hub_download(
-            repo_id="rhasspy/piper-voices",
-            filename=f"{_VOICE_REPO_PATH}.onnx",
-            repo_type="dataset",
-        )
-        config = hf_hub_download(
-            repo_id="rhasspy/piper-voices",
-            filename=f"{_VOICE_REPO_PATH}.onnx.json",
-            repo_type="dataset",
-        )
+        token = os.getenv("HF_TOKEN") or os.getenv("HF_API_TOKEN") or None
+        kwargs = {"repo_id": "rhasspy/piper-voices", "repo_type": "dataset", "token": token}
+
+        model  = hf_hub_download(filename=f"{_VOICE_REPO_PATH}.onnx",      **kwargs)
+        config = hf_hub_download(filename=f"{_VOICE_REPO_PATH}.onnx.json", **kwargs)
         _voice = PiperVoice.load(model, config_path=config, use_cuda=False)
     return _voice
 
