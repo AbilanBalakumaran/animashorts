@@ -61,33 +61,24 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Ken Burns via crop+scale with FFmpeg's `t` timestamp variable.
-    Avoids zoompan (version-sensitive, prone to config errors).
-    Scale to _PAD_W x _PAD_H first, then animate the crop window,
-    then scale back to target. No commas inside expressions = no quoting issues.
+    Ken Burns pan — scale to padded size (constant 1.04x zoom baked in),
+    then animate a fixed VIDEO_W x VIDEO_H crop window with x driven by `n`.
 
-    Even scenes  → zoom-in  (crop shrinks toward centre)
-    Odd  scenes  → dezoom   (crop grows from centre)
+    Fixed crop w/h = output dimensions never change = no filter-graph reinit.
+    Even scenes pan left→right, odd scenes pan right→left.
     """
     frames = max(int(dur * FPS), 2)
-    d = f"{dur:.4f}"  # dur as string literal in the expression
+    step   = round(_DW / max(frames - 1, 1), 4)   # px per frame
 
     if idx % 2 == 0:
-        # Zoom-in: large crop at t=0, small crop at t=dur
-        vf = (
-            f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
-            f"crop=w={_PAD_W}-{_DW}*t/{d}:h={_PAD_H}-{_DH}*t/{d}"
-            f":x={_DW}*t/2/{d}:y={_DH}*t/2/{d},"
-            f"scale={VIDEO_W}:{VIDEO_H}"
-        )
+        x_expr = f"n*{step}"           # 0 → _DW
     else:
-        # Dezoom: small crop at t=0, large crop at t=dur
-        vf = (
-            f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
-            f"crop=w={VIDEO_W}+{_DW}*t/{d}:h={VIDEO_H}+{_DH}*t/{d}"
-            f":x={_DW}/2-{_DW}*t/2/{d}:y={_DH}/2-{_DH}*t/2/{d},"
-            f"scale={VIDEO_W}:{VIDEO_H}"
-        )
+        x_expr = f"{_DW}-n*{step}"     # _DW → 0
+
+    vf = (
+        f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
+        f"crop={VIDEO_W}:{VIDEO_H}:x={x_expr}:y={_DH // 2}"
+    )
 
     _ffmpeg([
         "-y",
