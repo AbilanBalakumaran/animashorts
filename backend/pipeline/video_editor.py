@@ -53,14 +53,25 @@ def _prepare_image(src: Optional[str], dest: Path) -> None:
 
 def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
     """
-    Fast static clip per scene — xfade handles all visual transitions.
-    Static encoding is near-instant vs any per-frame filter.
+    Ken Burns — slow zoom-in / dezoom alternating per scene.
+    Uses -vframes (not -t) so FFmpeg never hangs on looped input.
+    Single quotes around expressions tell FFmpeg's parser that internal
+    commas are not filter separators.
     """
     frames = max(int(dur * FPS), 2)
+    rate   = round(ZOOM_AMT / max(frames - 1, 1), 8)
+
+    if idx % 2 == 0:
+        z_expr = f"'min(1.0+n*{rate},{1.0 + ZOOM_AMT})'"   # zoom-in
+    else:
+        z_expr = f"'max({1.0 + ZOOM_AMT}-n*{rate},1.0)'"   # dezoom
 
     vf = (
         f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=increase,"
-        f"crop={VIDEO_W}:{VIDEO_H}"
+        f"crop={VIDEO_W}:{VIDEO_H},"
+        f"zoompan=z={z_expr}"
+        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d=1:s={VIDEO_W}x{VIDEO_H}:fps={FPS}"
     )
 
     _ffmpeg([

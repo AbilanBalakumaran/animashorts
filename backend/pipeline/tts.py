@@ -17,21 +17,24 @@ _API_KEY   = os.getenv("ELEVENLABS_API_KEY", "")
 
 def _elevenlabs_sync(text: str, out: Path) -> None:
     from elevenlabs.client import ElevenLabs
+    from elevenlabs import VoiceSettings
     client = ElevenLabs(api_key=_API_KEY)
     audio = client.text_to_speech.convert(
         voice_id=_VOICE_ID,
         text=text,
         model_id="eleven_multilingual_v2",
-        voice_settings={
-            "stability": 0.45,
-            "similarity_boost": 0.80,
-            "style": 0.35,
-            "use_speaker_boost": True,
-        },
+        voice_settings=VoiceSettings(
+            stability=0.42,
+            similarity_boost=0.85,
+            style=0.30,
+            use_speaker_boost=True,
+        ),
     )
     with open(str(out), "wb") as f:
         for chunk in audio:
-            f.write(chunk)
+            if chunk:
+                f.write(chunk)
+    print(f"[TTS] ElevenLabs OK — {out.stat().st_size // 1024} KB")
 
 
 def _gtts_sync(text: str, out: Path) -> None:
