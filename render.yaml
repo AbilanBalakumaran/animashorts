@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: animashorts-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_API_TOKEN
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: OUTPUT_DIR
+        value: /app/outputs
+      - key: EDGE_TTS_VOICE
+        value: en-US-GuyNeural
+      - key: EDGE_TTS_RATE
+        value: "-8%"
+      - key: EDGE_TTS_PITCH
+        value: "-5Hz"
+      - key: START_WORKER
+        value: "true"
+    disk:
+      name: outputs
+      mountPath: /app/outputs
+      sizeGB: 1
