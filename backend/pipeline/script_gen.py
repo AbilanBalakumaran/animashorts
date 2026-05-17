@@ -1,8 +1,7 @@
 """
 Script generation — uses Groq (free tier).
 Model: llama-3.3-70b-versatile
-Free limits: 30 req/min, 14 400 req/day — largement suffisant.
-Compte gratuit: https://console.groq.com (pas de CB requise)
+Generates narration + scene timing for user-uploaded images.
 """
 
 import json
@@ -17,41 +16,40 @@ from models.scene import ScriptOutput, Scene
 
 _SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "script_system.txt").read_text()
 
-STYLE_MODIFIERS = {
-    "oceanic":     "deep ocean setting, flowing water, glowing blue hues, bioluminescent light",
-    "epic":        "dramatic battle composition, intense lighting, dynamic action pose",
-    "mysterious":  "dark atmospheric fog, moonlight, silhouettes, deep purple tones",
-    "emotional":   "soft golden hour lighting, tearful expression, gentle wind, warm tones",
-    "documentary": "clean composition, neutral tones, thoughtful expression, wide establishing shot",
-    "manga":       "black and white manga panels, speed lines, heavy ink contrast",
-}
-
 
 def _build_user_prompt(req: GenerateRequest) -> str:
-    style_mod = STYLE_MODIFIERS.get(req.style, STYLE_MODIFIERS["oceanic"])
     hint = f"\nNarration hint: {req.script_hint}" if req.script_hint else ""
+    num_images = max(len(req.image_paths), 1)
     return (
         f"Topic: {req.topic}{hint}\n"
         f"Target duration: {req.duration_seconds} seconds\n"
-        f"Visual style: {req.style} — {style_mod}\n"
+        f"num_images: {num_images}\n"
         "Generate the script JSON now."
     )
 
 
-def _parse_response(text: str, duration: int) -> ScriptOutput:
+def _parse_response(text: str, duration: int, image_paths: list[str]) -> ScriptOutput:
     text = text.strip()
-    # Strip markdown code fences if present
     if "```" in text:
-        parts = text.split("```")
-        for part in parts:
-            stripped = part.strip()
-            if stripped.startswith("json"):
-                stripped = stripped[4:].strip()
+        for part in text.split("```"):
+            stripped = part.strip().lstrip("json").strip()
             if stripped.startswith("{"):
                 text = stripped
                 break
     data = json.loads(text)
-    scenes = [Scene(**s) for s in data["scenes"]]
+
+    scenes_raw = data.get("scenes", [])
+    # Assign uploaded image paths to scenes
+    scenes = []
+    for i, s in enumerate(scenes_raw):
+        img = image_paths[i] if i < len(image_paths) else None
+        scenes.append(Scene(
+            id=s.get("id", i + 1),
+            duration_s=float(s.get("duration_s", duration / max(len(scenes_raw), 1))),
+            mood=s.get("mood", "calm"),
+            image_path=img,
+        ))
+
     return ScriptOutput(
         narration=data["narration"],
         scenes=scenes,
@@ -75,4 +73,4 @@ async def generate(req: GenerateRequest) -> ScriptOutput:
         response_format={"type": "json_object"},
     )
 
-    return _parse_response(resp.choices[0].message.content, req.duration_seconds)
+    return _parse_response(resp.choices[0].message.content, req.duration_seconds, req.image_paths)

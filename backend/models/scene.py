@@ -5,9 +5,9 @@ from pydantic import BaseModel, Field
 class Scene(BaseModel):
     id: int
     duration_s: float = Field(..., gt=0)
-    visual_prompt: str
     mood: str = "calm"
     image_path: Optional[str] = None
+    visual_prompt: str = ""  # kept for backward compat, unused with user images
 
 
 class ScriptOutput(BaseModel):

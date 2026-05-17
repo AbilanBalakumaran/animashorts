@@ -27,9 +27,9 @@ STEP_PROGRESS = {
 
 STEP_LABELS = {
     JobStep.queued: "Queued",
-    JobStep.script: "Writing script...",
+    JobStep.script: "Writing narration...",
     JobStep.tts: "Generating voice-over...",
-    JobStep.images: "Generating anime visuals...",
+    JobStep.images: "Preparing your images...",
     JobStep.render: "Rendering video...",
     JobStep.done: "Complete!",
     JobStep.error: "Failed",
@@ -67,6 +67,7 @@ class GenerateRequest(BaseModel):
     style: str = Field("oceanic", description="Visual style preset")
     duration_seconds: int = Field(16, ge=10, le=60, description="Target video duration in seconds")
     subtitles: bool = Field(False, description="Burn subtitles into video")
+    image_paths: list[str] = Field(default_factory=list, description="Paths to uploaded images")
 
 
 class GenerateResponse(BaseModel):
