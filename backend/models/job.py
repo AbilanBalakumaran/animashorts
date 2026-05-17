@@ -62,8 +62,8 @@ class JobStatus(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    topic: str = Field(..., min_length=3, max_length=500, description="Main topic or subject")
-    script_hint: Optional[str] = Field(None, max_length=1000, description="Optional script idea or narration hint")
+    topic: str = Field(..., min_length=3, max_length=8000, description="Main topic or full script prompt")
+    script_hint: Optional[str] = Field(None, max_length=4000, description="Optional script idea or narration hint")
     style: str = Field("oceanic", description="Visual style preset")
     duration_seconds: int = Field(16, ge=10, le=60, description="Target video duration in seconds")
     subtitles: bool = Field(False, description="Burn subtitles into video")

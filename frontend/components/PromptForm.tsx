@@ -121,23 +121,23 @@ export default function PromptForm() {
         )}
       </div>
 
-      {/* Topic */}
+      {/* Topic / script prompt */}
       <div className="space-y-2">
         <label className="block text-sm font-medium text-white/80">
-          What&apos;s the story?
+          Your prompt or full script
         </label>
         <textarea
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
-          placeholder="e.g. Jinbe's design evolution in One Piece. Oceanic atmosphere."
-          rows={3}
-          maxLength={500}
+          placeholder={`Describe your video in detail, or paste your full script.\n\nExample: "Create a cinematic short about Jinbe's evolution in One Piece. Start with his bounty hunter days, show his friendship with Luffy, end with his role as the helmsman of the Thousand Sunny. Emotional and oceanic tone."`}
+          rows={7}
+          maxLength={8000}
           required
           className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white
                      placeholder-white/30 focus:outline-none focus:border-cyan-400/60
-                     focus:ring-1 focus:ring-cyan-400/30 resize-none transition-all text-sm"
+                     focus:ring-1 focus:ring-cyan-400/30 resize-y transition-all text-sm"
         />
-        <div className="text-right text-xs text-white/30">{topic.length}/500</div>
+        <div className="text-right text-xs text-white/30">{topic.length}/8000</div>
       </div>
 
       {/* Duration */}
