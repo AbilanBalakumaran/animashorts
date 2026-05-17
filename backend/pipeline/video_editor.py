@@ -64,25 +64,26 @@ def _scene_to_clip(img: Path, dur: float, idx: int, out: Path) -> None:
     Ken Burns pan — scale to padded size (constant 1.04x zoom baked in),
     then animate a fixed VIDEO_W x VIDEO_H crop window with x driven by `n`.
 
-    Fixed crop w/h = output dimensions never change = no filter-graph reinit.
+    -t on the INPUT caps the loop; -vframes is the secondary stop.
+    Fixed crop w/h = output dimensions never change = no reinit.
     Even scenes pan left→right, odd scenes pan right→left.
     """
     frames = max(int(dur * FPS), 2)
-    step   = round(_DW / max(frames - 1, 1), 4)   # px per frame
+    step   = round(_DW / max(frames - 1, 1), 4)
 
     if idx % 2 == 0:
-        x_expr = f"n*{step}"           # 0 → _DW
+        x_expr = f"n*{step}"
     else:
-        x_expr = f"{_DW}-n*{step}"     # _DW → 0
+        x_expr = f"{_DW}-n*{step}"
 
     vf = (
         f"scale={_PAD_W}:{_PAD_H}:force_original_aspect_ratio=increase,"
-        f"crop={VIDEO_W}:{VIDEO_H}:x={x_expr}:y={_DH // 2}"
+        f"crop=w={VIDEO_W}:h={VIDEO_H}:x={x_expr}:y={_DH // 2}"
     )
 
     _ffmpeg([
         "-y",
-        "-loop", "1", "-framerate", str(FPS), "-i", str(img),
+        "-loop", "1", "-t", f"{dur + 0.5}", "-framerate", str(FPS), "-i", str(img),
         "-vf", vf,
         "-vframes", str(frames),
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
