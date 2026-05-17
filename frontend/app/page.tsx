@@ -119,7 +119,7 @@ export default function HomePage() {
             "🖼️ Your Own Images",
             "🎬 Smooth Zoom Effects",
             "🎵 Auto Music",
-            "⚡ Crossfade Transitions",
+            "⚡ Hard Cut Edits",
             "📱 TikTok Ready",
           ].map((feat) => (
             <span
