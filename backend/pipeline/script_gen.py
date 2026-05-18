@@ -72,7 +72,7 @@ async def _analyse_image(client: AsyncGroq, image_path: str) -> ImageAnalysis:
     try:
         from PIL import Image as PILImage
         img = PILImage.open(image_path).convert("RGB")
-        img.thumbnail((768, 768))          # slightly larger → richer vision
+        img.thumbnail((512, 512))
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=85)
         img_b64 = base64.b64encode(buf.getvalue()).decode()
@@ -341,8 +341,11 @@ async def generate(req: GenerateRequest) -> ScriptOutput:
     # Step 2 — generate script matched to image analyses
     data = await _generate_script(client, req, analyses)
 
-    # Step 3 — validate each scene narration matches its image; repair if not
-    data = await _fix_mismatched_scenes(client, data, analyses, req.topic)
+    # Step 3 — log any mismatches (repair skipped to keep generation fast)
+    for i, (scene, analysis) in enumerate(zip(data.get("scenes", []), analyses)):
+        seg = scene.get("narration_segment", "")
+        if not _check_scene_match(seg, analysis):
+            print(f"[validate] Scene {i+1} weak match — '{seg[:60]}' vs subject='{analysis.subject}'")
 
     return _parse_response(
         json.dumps(data),

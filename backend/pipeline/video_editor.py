@@ -101,7 +101,7 @@ def _scene_to_clip(img_path: Path, dur: float, idx: int, out: Path) -> None:
     )
 
     base_args = [
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-profile:v", "main", "-level", "4.0",
         "-pix_fmt", "yuv420p", "-an", "-threads", "0", str(out),
     ]
@@ -191,7 +191,7 @@ def _mix_bgm(video: Path, bgm: Optional[Path], out: Path,
     ]
     if vf:
         cmd += [
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
             "-vf", vf,
         ]
@@ -208,7 +208,7 @@ def _burn_subs(video: Path, srt: Path, out: Path) -> None:
           "OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2'")
     _ffmpeg([
         "-y", "-i", str(video), "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
         "-c:a", "copy", "-movflags", "+faststart", str(out),
     ], "burn-subs")
