@@ -1,148 +1,128 @@
 """
-Génération d'images — HuggingFace Inference API (gratuit).
-Compte gratuit: https://huggingface.co (pas de CB)
-Token HF: https://huggingface.co/settings/tokens
+AI image generation using Pollinations.ai — free, no API key required.
+Used when the user chooses "AI generates images" mode (no upload).
 
-Modèles utilisés (anime, gratuits) :
-  Primary  : Linaqruf/animagine-xl-3.1   (SDXL anime haute qualité)
-  Fallback : stablediffusionapi/anything-v5 (anime classique)
-  Fallback2: placeholder couleur unie si tout échoue
+API: GET https://image.pollinations.ai/prompt/{prompt}?...
+Returns a JPEG image directly. Powered by FLUX.
 
-Sans GPU — fonctionne en inference API HuggingFace.
-Avec GPU local — décommentez la section diffusers.
+Pollinations is free and open — no account, no API key, no rate limit (be reasonable).
+Docs: https://pollinations.ai
 """
 
 import asyncio
-import os
-import time
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from models.scene import Scene
-from storage.local import image_path
 
-NEGATIVE_PROMPT = (
-    "realistic, 3D render, photography, photo, blurry, watermark, text, "
-    "signature, ugly, deformed, low quality, nsfw, bad anatomy, extra limbs"
+# 9:16 portrait — clean resolution for vertical shorts
+_IMG_W = 768
+_IMG_H = 1365
+
+# Appended to every prompt for consistent anime style output
+_STYLE_SUFFIX = (
+    "One Piece anime style cel shaded detailed illustration "
+    "cinematic vertical portrait dramatic lighting vibrant colors "
+    "masterpiece studio quality no watermark no text no logo"
 )
 
-HF_API_URL = "https://api-inference.huggingface.co/models/{model}"
+# Negative elements included via prompt phrasing (Pollinations uses prompt-based neg)
+_NEG = "avoid realistic photography 3D render blurry watermark"
 
-HF_ANIME_MODELS = [
-    "Linaqruf/animagine-xl-3.1",
-    "cagliostrolab/animagine-xl-3.1",
-    "stablediffusionapi/anything-v5",
-]
+# Max 2 concurrent requests to Pollinations (polite usage)
+_SEM = asyncio.Semaphore(2)
 
 
-def _anime_enhance(prompt: str, style: str = "oceanic") -> str:
-    base = (
-        f"{prompt}, anime style, cel shaded, high quality illustration, "
-        "detailed linework, vibrant colors, masterpiece, best quality"
+def _build_prompt(scene: Scene, topic: str) -> str:
+    """Build the full image generation prompt for a scene."""
+    base = (scene.visual_prompt or f"{topic} anime scene").strip().rstrip(".,;:")
+    return f"{base}, {_STYLE_SUFFIX}"
+
+
+async def _fetch_image(prompt: str, out: Path, seed: int) -> Path:
+    """Download one image from Pollinations.ai."""
+    url = (
+        f"https://image.pollinations.ai/prompt/{quote(prompt)}"
+        f"?width={_IMG_W}&height={_IMG_H}"
+        f"&nologo=true&seed={seed}&model=flux&enhance=true"
     )
-    return base
+    async with _SEM:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            content = resp.content
 
+    # Validate it's an image, not an error JSON
+    if content[:4] not in (b"\x89PNG", b"\xff\xd8\xff", b"RIFF", b"ftyp"):
+        if len(content) < 1000:
+            raise RuntimeError(f"Pollinations returned non-image: {content[:200]}")
 
-@retry(stop=stop_after_attempt(2), wait=wait_exponential(min=3, max=20))
-async def _hf_generate(prompt: str, scene: Scene, job_id: str, model: str) -> Path:
-    token = os.getenv("HF_API_TOKEN", "")
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    enhanced = _anime_enhance(prompt)
-    payload = {
-        "inputs": enhanced,
-        "parameters": {
-            "negative_prompt": NEGATIVE_PROMPT,
-            "width": 768,
-            "height": 1344,
-            "num_inference_steps": 25,
-            "guidance_scale": 7.5,
-        },
-        "options": {"wait_for_model": True},
-    }
-
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            HF_API_URL.format(model=model),
-            headers=headers,
-            json=payload,
-        )
-        if resp.status_code == 503:
-            # Model loading — wait and retry
-            await asyncio.sleep(20)
-            raise RuntimeError("Model loading, retrying...")
-        resp.raise_for_status()
-        image_bytes = resp.content
-
-    # Vérifier que c'est bien une image (pas un JSON d'erreur)
-    if image_bytes[:4] not in (b"\x89PNG", b"\xff\xd8\xff", b"RIFF"):
-        raise RuntimeError(f"Response is not an image: {image_bytes[:100]}")
-
-    out = image_path(job_id, scene.id)
-    out.write_bytes(image_bytes)
+    out.write_bytes(content)
     return out
 
 
-async def _generate_with_fallbacks(scene: Scene, job_id: str) -> Scene:
-    for model in HF_ANIME_MODELS:
-        try:
-            path = await _hf_generate(scene.visual_prompt, scene, job_id, model)
-            scene.image_path = str(path)
-            return scene
-        except Exception:
-            continue
+async def _placeholder(out: Path, mood: str, scene_id: int) -> Path:
+    """Solid-colour fallback image if Pollinations fails."""
+    from PIL import Image, ImageDraw
 
-    # Dernier recours : image placeholder colorée
-    scene.image_path = str(await _create_placeholder(scene.id, scene.mood, job_id))
-    return scene
-
-
-async def _create_placeholder(scene_id: int, mood: str, job_id: str) -> Path:
-    """Crée une image de couleur unie si la génération échoue."""
-    from PIL import Image, ImageDraw, ImageFont
-
-    MOOD_COLORS = {
-        "oceanic":     (15, 52, 96),
-        "epic":        (80, 10, 10),
-        "mysterious":  (20, 0, 40),
-        "emotional":   (80, 40, 0),
-        "calm":        (20, 40, 60),
-        "documentary": (30, 30, 30),
+    COLORS = {
+        "oceanic":    (15, 52, 96),
+        "epic":       (60, 10, 10),
+        "mysterious": (20, 0, 40),
+        "emotional":  (70, 30, 0),
+        "calm":       (20, 40, 60),
     }
-    MOOD_ACCENT = {
-        "oceanic":     (0, 200, 255),
-        "epic":        (255, 80, 0),
-        "mysterious":  (150, 0, 255),
-        "emotional":   (255, 180, 0),
-        "calm":        (100, 180, 255),
-        "documentary": (180, 180, 180),
+    ACCENTS = {
+        "oceanic":    (0, 200, 255),
+        "epic":       (255, 80, 0),
+        "mysterious": (150, 0, 255),
+        "emotional":  (255, 160, 0),
+        "calm":       (100, 180, 255),
     }
-
-    bg    = MOOD_COLORS.get(mood, (20, 20, 30))
-    color = MOOD_ACCENT.get(mood, (100, 100, 200))
-
-    img  = Image.new("RGB", (768, 1344), color=bg)
+    bg = COLORS.get(mood, (20, 20, 30))
+    ac = ACCENTS.get(mood, (120, 120, 200))
+    img = Image.new("RGB", (_IMG_W, _IMG_H), color=bg)
     draw = ImageDraw.Draw(img)
-
-    # Cercle lumineux au centre
-    cx, cy, r = 384, 672, 120
-    for i in range(r, 0, -1):
-        alpha = int(80 * (1 - i / r))
-        draw.ellipse([cx - i, cy - i, cx + i, cy + i], fill=(*color, alpha))
-
-    draw.text((384, 672), f"Scene {scene_id}", fill=color, anchor="mm")
-
-    out = image_path(job_id, scene_id)
-    img.save(str(out), "PNG")
+    cx, cy, r = _IMG_W // 2, _IMG_H // 2, 100
+    for i in range(r, 0, -4):
+        draw.ellipse([cx - i, cy - i, cx + i, cy + i], fill=ac)
+    draw.text((cx, cy), f"Scene {scene_id}", fill=(255, 255, 255), anchor="mm")
+    img.save(str(out), "JPEG", quality=90)
     return out
 
 
-async def generate_scenes(scenes: list[Scene], job_id: str) -> list[Scene]:
-    """Génère toutes les images en parallèle."""
-    return list(await asyncio.gather(*[
-        _generate_with_fallbacks(s, job_id) for s in scenes
-    ]))
+async def generate_for_scenes(
+    scenes: list[Scene],
+    topic: str,
+    job_id: str,
+) -> list[Scene]:
+    """
+    Generate one AI image per scene that has no image_path yet.
+    Modifies scenes in-place and returns the updated list.
+    """
+    from storage.local import job_dir
+    d = job_dir(job_id)
+
+    async def _process(i: int, scene: Scene) -> None:
+        if scene.image_path and Path(scene.image_path).exists():
+            return  # user-uploaded image — skip
+
+        prompt = _build_prompt(scene, topic)
+        out = d / f"ai_image_{i:02d}.jpg"
+        seed = i * 13 + 7  # different seed per scene for variety
+
+        print(f"[image_gen] generating scene {i+1}: {prompt[:80]}…")
+        try:
+            await _fetch_image(prompt, out, seed)
+            scene.image_path = str(out)
+            print(f"[image_gen] scene {i+1} ✓  ({out.stat().st_size // 1024} KB)")
+        except Exception as exc:
+            print(f"[image_gen] scene {i+1} FAILED ({exc}) — using placeholder")
+            fallback = d / f"placeholder_{i:02d}.jpg"
+            await _placeholder(fallback, scene.mood, scene.id)
+            scene.image_path = str(fallback)
+
+    await asyncio.gather(*[_process(i, s) for i, s in enumerate(scenes)])
+    return scenes

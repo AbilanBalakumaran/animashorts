@@ -159,6 +159,29 @@ def _build_user_prompt(req: GenerateRequest, analyses: list[ImageAnalysis]) -> s
     )
 
 
+def _build_user_prompt_no_images(req: GenerateRequest) -> str:
+    """User prompt for the AI-generates-images mode — no uploaded images."""
+    hint = f"\nNarration hint: {req.script_hint}" if req.script_hint else ""
+    # Estimate scene count: ~4s per scene, min 2, max 12
+    n = max(2, min(12, req.duration_seconds // 4))
+
+    return (
+        f"Topic: {req.topic}{hint}\n"
+        f"Target duration: {req.duration_seconds} seconds\n"
+        f"Create EXACTLY {n} scenes.\n\n"
+        f"For each scene:\n"
+        f"1. narration_segment — 1 punchy sentence with strong verbs, cinematic tone\n"
+        f"2. visual_prompt — describe the perfect anime image to show during this sentence:\n"
+        f"   - Name the specific character or subject shown\n"
+        f"   - Describe what they are doing\n"
+        f"   - Include 'One Piece anime style' or relevant style tag\n"
+        f"   Example: 'Eiichiro Oda drawing at desk night lamp One Piece anime style'\n"
+        f"   Example: 'Jinbei fishman warrior underwater ocean One Piece anime style'\n\n"
+        f"Word budget: ~{req.duration_seconds // 2} words total across all narration segments.\n"
+        f"Use strong verbs. Open scene 1 with a hook. Tell a compelling story about: {req.topic}"
+    )
+
+
 def _duration_from_text(text: str, fallback: float) -> float:
     """
     Compute scene duration from the actual narration text.
@@ -203,7 +226,8 @@ def _parse_response(text: str, duration: int, image_paths: list[str]) -> ScriptO
             id=s.get("id", i + 1),
             duration_s=dur,
             mood=s.get("mood", "calm"),
-            image_path=image_paths[i],
+            image_path=image_paths[i] if i < len(image_paths) else None,
+            visual_prompt=s.get("visual_prompt", ""),
         ))
 
     total = sum(sc.duration_s for sc in scenes)
@@ -337,9 +361,11 @@ async def _fix_mismatched_scenes(
 async def generate(req: GenerateRequest) -> ScriptOutput:
     client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
 
-    # Step 1 — deep visual analysis for each image (parallel)
-    valid_paths = [p for p in req.image_paths if p and Path(p).exists()]
+    valid_paths = [p for p in (req.image_paths or []) if p and Path(p).exists()]
+
     if valid_paths:
+        # ── Mode A: user uploaded images ──────────────────────────────────────
+        # Step 1 — deep visual analysis for each image (parallel)
         results = await asyncio.gather(
             *[_analyse_image(client, p) for p in valid_paths],
             return_exceptions=True,
@@ -352,21 +378,36 @@ async def generate(req: GenerateRequest) -> ScriptOutput:
             )
             for r in results
         ]
+
+        # Step 2 — generate script matched to image analyses
+        data = await _generate_script(client, req, analyses)
+
+        # Step 3 — repair any scenes whose narration doesn't match their image
+        data = await _fix_mismatched_scenes(client, data, analyses, req.topic)
+
+        return _parse_response(json.dumps(data), req.duration_seconds, valid_paths)
+
     else:
-        analyses = [
-            ImageAnalysis(subject="a compelling visual scene", action="unfolds",
-                          setting="unknown", mood="calm", details="", hook="", raw="")
-            for _ in req.image_paths or [""]
-        ]
+        # ── Mode B: no images uploaded — AI generates everything ──────────────
+        # Ask LLM to create narration + visual_prompt per scene (no image analysis)
+        resp = await client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user",   "content": _build_user_prompt_no_images(req)},
+            ],
+            temperature=0.7,
+            max_tokens=1400,
+            response_format={"type": "json_object"},
+        )
+        text = resp.choices[0].message.content.strip()
+        if "```" in text:
+            for part in text.split("```"):
+                stripped = part.strip().lstrip("json").strip()
+                if stripped.startswith("{"):
+                    text = stripped
+                    break
+        data = json.loads(text)
 
-    # Step 2 — generate script matched to image analyses
-    data = await _generate_script(client, req, analyses)
-
-    # Step 3 — repair any scenes whose narration doesn't match their image
-    data = await _fix_mismatched_scenes(client, data, analyses, req.topic)
-
-    return _parse_response(
-        json.dumps(data),
-        req.duration_seconds,
-        req.image_paths,
-    )
+        # No image_paths — scenes get None image_path (image_gen will fill them)
+        return _parse_response(json.dumps(data), req.duration_seconds, [])

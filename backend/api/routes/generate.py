@@ -35,10 +35,9 @@ async def generate_video(
     style: str = Form("oceanic"),
     duration_seconds: int = Form(16),
     subtitles: bool = Form(False),
-    images: List[UploadFile] = File(...),
+    images: List[UploadFile] = File(default=[]),
 ):
-    if not images:
-        raise HTTPException(status_code=400, detail="At least one image is required")
+    # images is optional — if empty, AI generates images automatically
     if len(images) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 images allowed")
 

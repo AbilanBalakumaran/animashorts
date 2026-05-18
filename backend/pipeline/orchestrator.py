@@ -12,6 +12,7 @@ from storage.local import output_url
 
 import pipeline.script_gen as script_gen
 import pipeline.tts as tts
+import pipeline.image_gen as image_gen
 import pipeline.music as music
 import pipeline.subtitle as subtitle
 import pipeline.video_editor as video_editor
@@ -53,9 +54,17 @@ async def _async_pipeline(job_id: str, payload: dict) -> None:
             if word_timestamps:
                 subtitle.generate_srt(word_timestamps, job_id)
 
-        # Stage 3: Prepare images (already uploaded, just report progress)
+        # Stage 3: Images — generate with AI if none were uploaded
         status.advance(JobStep.images)
         _save_status(status)
+        from pathlib import Path
+        needs_generation = any(
+            not sc.image_path or not Path(sc.image_path).exists()
+            for sc in script.scenes
+        )
+        if needs_generation:
+            print(f"[orchestrator] no user images — generating {len(script.scenes)} AI images")
+            await image_gen.generate_for_scenes(script.scenes, req.topic, job_id)
 
         # BGM selection
         bgm_path, _ = await music.get_music_for_script(script.narration, script.mood)

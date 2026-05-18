@@ -36,7 +36,7 @@ export interface GeneratePayload {
   style: string;
   duration_seconds: number;
   subtitles: boolean;
-  images: File[];
+  images: File[];   // empty array = AI generates images automatically
 }
 
 export async function generateVideo(payload: GeneratePayload): Promise<{ job_id: string }> {

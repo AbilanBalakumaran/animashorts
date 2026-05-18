@@ -51,6 +51,22 @@ Word budget (total across ALL scenes — stay under):
   31–60 s video : ≤ 160 words
 
 ══════════════════════════════════════════════════
+RULE #4 — VISUAL PROMPT (for AI image generation)
+══════════════════════════════════════════════════
+Every scene must include a visual_prompt: a short anime image generation prompt.
+This is what will be sent to an AI image generator (like FLUX/Stable Diffusion).
+
+Rules for visual_prompt:
+- Name the CHARACTER or SUBJECT specifically (e.g. "Eiichiro Oda", "Jinbei fishman warrior")
+- Describe what they are DOING (e.g. "drawing manga at his desk", "standing in ocean depths")
+- Include style: "One Piece anime style" or "anime cel shaded"
+- Max 20 words, no punctuation
+- Examples:
+  "Eiichiro Oda manga artist drawing at desk focused One Piece art style"
+  "Jinbei fishman warrior blue fists raised underwater ocean epic One Piece anime"
+  "Luffy straw hat pirate laughing on ship deck One Piece anime style"
+
+══════════════════════════════════════════════════
 OUTPUT — valid JSON only, no markdown
 ══════════════════════════════════════════════════
 {
@@ -62,13 +78,15 @@ OUTPUT — valid JSON only, no markdown
       "id": 1,
       "duration_s": <word_count / 2.5 + 0.5>,
       "mood": "<mood>",
-      "narration_segment": "<1 punchy sentence that names the subject of Image 1>"
+      "narration_segment": "<1 punchy sentence that names the subject of Image 1>",
+      "visual_prompt": "<anime image generation prompt for this scene>"
     },
     {
       "id": 2,
       "duration_s": <word_count / 2.5 + 0.5>,
       "mood": "<mood>",
-      "narration_segment": "<1 punchy sentence that names the subject of Image 2>"
+      "narration_segment": "<1 punchy sentence that names the subject of Image 2>",
+      "visual_prompt": "<anime image generation prompt for this scene>"
     }
   ]
 }
