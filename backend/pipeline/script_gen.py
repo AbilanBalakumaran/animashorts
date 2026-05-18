@@ -141,6 +141,18 @@ def _build_user_prompt(req: GenerateRequest, analyses: list[ImageAnalysis]) -> s
     )
 
 
+def _duration_from_text(text: str, fallback: float) -> float:
+    """
+    Compute scene duration from the actual narration text.
+    Formula: word_count / 2.5 + 0.5  (2.5 words/sec documentary pace + 0.5s pause)
+    Never trust the LLM's own duration calculation — it often multiplies instead of divides.
+    """
+    if not text or not text.strip():
+        return max(fallback, 1.5)
+    word_count = len(text.split())
+    return max(round(word_count / 2.5 + 0.5, 2), 1.5)
+
+
 def _parse_response(text: str, duration: int, image_paths: list[str]) -> ScriptOutput:
     text = text.strip()
     if "```" in text:
@@ -155,32 +167,42 @@ def _parse_response(text: str, duration: int, image_paths: list[str]) -> ScriptO
     num_images = len(image_paths)
 
     if len(scenes_raw) < num_images:
-        per_scene = duration / num_images
         while len(scenes_raw) < num_images:
             scenes_raw.append({
                 "id": len(scenes_raw) + 1,
-                "duration_s": per_scene,
                 "mood": data.get("mood", "calm"),
+                "narration_segment": "",
             })
     elif len(scenes_raw) > num_images:
-        excess = sum(s.get("duration_s", 0) for s in scenes_raw[num_images:])
         scenes_raw = scenes_raw[:num_images]
-        scenes_raw[-1]["duration_s"] = scenes_raw[-1].get("duration_s", 0) + excess
 
-    scenes = [
-        Scene(
+    scenes = []
+    for i, s in enumerate(scenes_raw):
+        seg = s.get("narration_segment", "")
+        # Always recompute duration from actual word count — never trust LLM math
+        dur = _duration_from_text(seg, duration / num_images)
+        scenes.append(Scene(
             id=s.get("id", i + 1),
-            duration_s=max(float(s.get("duration_s", duration / num_images)), 1.5),
+            duration_s=dur,
             mood=s.get("mood", "calm"),
             image_path=image_paths[i],
-        )
-        for i, s in enumerate(scenes_raw)
-    ]
+        ))
+
+    total = sum(sc.duration_s for sc in scenes)
+
+    # Safety cap: if total is more than 40% over the requested duration, scale down
+    max_allowed = duration * 1.4
+    if total > max_allowed:
+        scale = max_allowed / total
+        print(f"[script] duration {total:.1f}s > cap {max_allowed:.1f}s — scaling by {scale:.2f}")
+        for sc in scenes:
+            sc.duration_s = max(round(sc.duration_s * scale, 2), 1.5)
+        total = sum(sc.duration_s for sc in scenes)
 
     return ScriptOutput(
         narration=data["narration"],
         scenes=scenes,
-        total_duration_s=float(data.get("total_duration_s", duration)),
+        total_duration_s=round(total, 2),
         mood=data.get("mood", "calm"),
     )
 
@@ -272,8 +294,7 @@ async def _fix_mismatched_scenes(
                     max_tokens=60,
                 )
             new_seg = fix_resp.choices[0].message.content.strip().strip('"').strip("'")
-            word_count = len(new_seg.split())
-            new_duration = round(word_count / 2.5 + 0.5, 1)
+            new_duration = _duration_from_text(new_seg, 3.0)
 
             scenes[i]["narration_segment"] = new_seg
             scenes[i]["duration_s"] = new_duration
