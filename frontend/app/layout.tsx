@@ -46,6 +46,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             window.addEventListener('load', () => {
               navigator.serviceWorker.register('/sw.js').catch(() => {});
             });
+            // When a new SW activates it sends SW_RELOAD → reload page for fresh chunks
+            navigator.serviceWorker.addEventListener('message', function(e) {
+              if (e.data && e.data.type === 'SW_RELOAD') {
+                window.location.reload();
+              }
+            });
           }
         `}} />
       </body>

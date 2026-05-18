@@ -19,7 +19,7 @@ self.addEventListener("install", (e) => {
   );
 });
 
-// ── Activate: delete ALL old caches ───────────────────────────────────────
+// ── Activate: delete ALL old caches, then force reload all open tabs ──────
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
@@ -30,6 +30,11 @@ self.addEventListener("activate", (e) => {
         })
       ))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then((clients) => {
+        // Tell every open tab to reload so it picks up fresh JS/CSS hashes
+        clients.forEach((c) => c.postMessage({ type: "SW_RELOAD" }));
+      })
   );
 });
 
