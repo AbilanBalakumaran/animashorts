@@ -4,12 +4,13 @@ import { motion } from "framer-motion";
 import PromptForm from "@/components/PromptForm";
 import Link from "next/link";
 
+// Fixed seed so server and client render the same HTML (no hydration mismatch)
 const PARTICLES = Array.from({ length: 20 }, (_, i) => ({
   id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 3 + 1,
-  delay: Math.random() * 5,
+  x: (i * 17 + 7) % 100,
+  y: (i * 31 + 13) % 100,
+  size: (i % 3) + 1,
+  delay: (i * 0.4) % 5,
 }));
 
 export default function HomePage() {
