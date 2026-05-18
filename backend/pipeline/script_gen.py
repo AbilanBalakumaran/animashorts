@@ -26,20 +26,24 @@ _SEM = asyncio.Semaphore(3)   # max 3 concurrent Groq calls
 @dataclass
 class ImageAnalysis:
     subject: str      # Who/what is the main focus
+    action: str       # What the subject is DOING (dynamic description)
     setting: str      # Where/context
     mood: str         # Emotional atmosphere
-    details: str      # Key visible details (colours, expressions, actions)
+    details: str      # Key visible details (colours, expressions, objects)
+    hook: str         # The single most striking / surprising visual element
     raw: str          # Full description (fallback)
 
     def to_prompt_block(self, idx: int) -> str:
         return (
             f"Scene {idx + 1} narration MUST describe → Image {idx + 1}:\n"
             f"  Subject  : {self.subject}\n"
+            f"  Action   : {self.action}\n"
             f"  Setting  : {self.setting}\n"
             f"  Mood     : {self.mood}\n"
             f"  Details  : {self.details}\n"
-            f"  ↳ Write ONE sentence that specifically references this subject "
-            f"in this setting. Do NOT describe any other image."
+            f"  Hook     : {self.hook}\n"
+            f"  ↳ Write ONE punchy sentence with strong verbs, naming '{self.subject}' "
+            f"specifically. Do NOT describe any other image."
         )
 
 
@@ -53,9 +57,11 @@ def _parse_analysis(text: str, fallback: str) -> ImageAnalysis:
     }
     return ImageAnalysis(
         subject=lines.get("SUBJECT", fallback),
+        action=lines.get("ACTION", "appears"),
         setting=lines.get("SETTING", "unknown setting"),
         mood=lines.get("MOOD", "calm"),
         details=lines.get("DETAILS", ""),
+        hook=lines.get("HOOK", ""),
         raw=text,
     )
 
@@ -64,9 +70,11 @@ async def _analyse_image(client: AsyncGroq, image_path: str) -> ImageAnalysis:
     """Deep visual analysis of one image — returns structured metadata."""
     fallback = ImageAnalysis(
         subject="a compelling visual scene",
+        action="unfolds",
         setting="unknown setting",
         mood="calm",
         details="",
+        hook="",
         raw="",
     )
     try:
@@ -78,14 +86,16 @@ async def _analyse_image(client: AsyncGroq, image_path: str) -> ImageAnalysis:
         img_b64 = base64.b64encode(buf.getvalue()).decode()
 
         vision_prompt = (
-            "You are analysing a single image for a video narrator. "
-            "Identify exactly what is in THIS image and nothing else.\n\n"
+            "You are analysing a single image for a documentary narrator. "
+            "Identify exactly what is in THIS image — nothing else.\n\n"
             "Answer in this EXACT format (one line each, no extra text):\n"
-            "SUBJECT: <who or what is the main focus — be specific, use proper names if visible>\n"
+            "SUBJECT: <who or what is the main focus — be very specific, use proper names if visible>\n"
+            "ACTION: <what the subject is DOING right now — use active verbs, be specific>\n"
             "SETTING: <location, background, environment>\n"
-            "MOOD: <emotional atmosphere: epic | calm | emotional | mysterious | oceanic>\n"
-            "DETAILS: <2–3 specific visual details: colours, expressions, objects, symbols>\n\n"
-            "Be precise. If you see a specific character, artwork, or place, name it."
+            "MOOD: <epic | calm | emotional | mysterious | oceanic>\n"
+            "DETAILS: <2 key visual details: colours, expressions, symbols, objects, poses>\n"
+            "HOOK: <the single most striking or surprising element in this image — 1 short phrase>\n\n"
+            "Be precise. If you see a specific character, artwork, or landmark, name it exactly."
         )
 
         async with _SEM:
@@ -101,7 +111,7 @@ async def _analyse_image(client: AsyncGroq, image_path: str) -> ImageAnalysis:
                         {"type": "text", "text": vision_prompt},
                     ],
                 }],
-                max_tokens=150,
+                max_tokens=200,
                 temperature=0.1,   # near-deterministic for factual description
             )
 
@@ -109,7 +119,7 @@ async def _analyse_image(client: AsyncGroq, image_path: str) -> ImageAnalysis:
         analysis = _parse_analysis(raw, Path(image_path).stem)
         print(
             f"[vision] {Path(image_path).name}: "
-            f"{analysis.subject} | {analysis.setting} | {analysis.mood}"
+            f"{analysis.subject} | {analysis.action} | {analysis.mood}"
         )
         return analysis
 
@@ -124,6 +134,12 @@ def _build_user_prompt(req: GenerateRequest, analyses: list[ImageAnalysis]) -> s
 
     mapping = "\n\n".join(a.to_prompt_block(i) for i, a in enumerate(analyses))
 
+    # Quick-reference table so the LLM can self-check before outputting
+    ref_table = "\n".join(
+        f"  Scene {i+1} → must name: {a.subject} ({a.action})"
+        for i, a in enumerate(analyses)
+    )
+
     return (
         f"Topic: {req.topic}{hint}\n"
         f"Target duration: {req.duration_seconds} seconds\n"
@@ -133,11 +149,13 @@ def _build_user_prompt(req: GenerateRequest, analyses: list[ImageAnalysis]) -> s
         f"{'=' * 60}\n"
         f"{mapping}\n"
         f"{'=' * 60}\n\n"
-        f"Rules:\n"
+        f"RULES:\n"
         f"- Produce EXACTLY {n} scenes.\n"
         f"- Scene N narration describes Image N — never swap.\n"
-        f"- Each narration_segment must directly mention the SUBJECT of its image.\n"
-        f"- Weave all scenes into a coherent narrative about: {req.topic}"
+        f"- Use strong verbs and vivid language — make each sentence feel cinematic.\n"
+        f"- Weave all scenes into a coherent narrative about: {req.topic}\n\n"
+        f"QUICK-CHECK TABLE (verify before outputting):\n"
+        f"{ref_table}"
     )
 
 
@@ -279,11 +297,13 @@ async def _fix_mismatched_scenes(
                 f"The narration for scene {i + 1} is WRONG — it doesn't match its image.\n\n"
                 f"Image {i + 1} shows:\n"
                 f"  Subject : {analysis.subject}\n"
+                f"  Action  : {analysis.action}\n"
                 f"  Setting : {analysis.setting}\n"
+                f"  Hook    : {analysis.hook}\n"
                 f"  Details : {analysis.details}\n\n"
                 f"Bad narration: \"{seg}\"\n\n"
-                f"Write ONE correct replacement sentence (max 15 words) that specifically "
-                f"describes this image. Topic context: {topic}.\n"
+                f"Write ONE punchy replacement sentence (max 15 words) that names '{analysis.subject}' "
+                f"and uses strong verbs. Topic context: {topic}.\n"
                 f"Reply with ONLY the sentence, no quotes."
             )
             async with _SEM:
@@ -327,25 +347,23 @@ async def generate(req: GenerateRequest) -> ScriptOutput:
         analyses: list[ImageAnalysis] = [
             r if isinstance(r, ImageAnalysis) else ImageAnalysis(
                 subject="a compelling visual scene",
-                setting="unknown", mood="calm", details="", raw="",
+                action="unfolds",
+                setting="unknown", mood="calm", details="", hook="", raw="",
             )
             for r in results
         ]
     else:
         analyses = [
-            ImageAnalysis(subject="a compelling visual scene",
-                          setting="unknown", mood="calm", details="", raw="")
+            ImageAnalysis(subject="a compelling visual scene", action="unfolds",
+                          setting="unknown", mood="calm", details="", hook="", raw="")
             for _ in req.image_paths or [""]
         ]
 
     # Step 2 — generate script matched to image analyses
     data = await _generate_script(client, req, analyses)
 
-    # Step 3 — log any mismatches (repair skipped to keep generation fast)
-    for i, (scene, analysis) in enumerate(zip(data.get("scenes", []), analyses)):
-        seg = scene.get("narration_segment", "")
-        if not _check_scene_match(seg, analysis):
-            print(f"[validate] Scene {i+1} weak match — '{seg[:60]}' vs subject='{analysis.subject}'")
+    # Step 3 — repair any scenes whose narration doesn't match their image
+    data = await _fix_mismatched_scenes(client, data, analyses, req.topic)
 
     return _parse_response(
         json.dumps(data),
