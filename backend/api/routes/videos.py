@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./outputs"))
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./outputs")).resolve()
 
 router = APIRouter()
 
@@ -29,59 +29,16 @@ async def list_videos():
 
 
 @router.get("/stream/{job_id}")
-async def stream_video(job_id: str, request: Request):
-    """Serve video with full Range-request support for browser <video> elements."""
+async def stream_video(job_id: str):
+    """Serve video for browser <video> element.
+    FileResponse handles Range requests (206) natively — no custom parsing needed."""
     video_file = _video_path(job_id)
     if not video_file.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    file_size = video_file.stat().st_size
-    range_header = request.headers.get("Range")
-
-    if range_header:
-        # Parse "bytes=start-end"
-        try:
-            byte_range = range_header.replace("bytes=", "").split("-")
-            start = int(byte_range[0])
-            end = int(byte_range[1]) if byte_range[1] else file_size - 1
-        except Exception:
-            raise HTTPException(status_code=416, detail="Invalid Range header")
-
-        end = min(end, file_size - 1)
-        chunk_size = end - start + 1
-
-        def iter_file():
-            with open(video_file, "rb") as f:
-                f.seek(start)
-                remaining = chunk_size
-                while remaining > 0:
-                    data = f.read(min(65536, remaining))
-                    if not data:
-                        break
-                    remaining -= len(data)
-                    yield data
-
-        return StreamingResponse(
-            iter_file(),
-            status_code=206,
-            media_type="video/mp4",
-            headers={
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(chunk_size),
-                "Cache-Control": "no-cache",
-            },
-        )
-
-    # Full file
+        raise HTTPException(status_code=404, detail=f"Video not found: {video_file}")
     return FileResponse(
         path=str(video_file),
         media_type="video/mp4",
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_size),
-            "Cache-Control": "no-cache",
-        },
+        headers={"Cache-Control": "no-cache"},
     )
 
 
@@ -89,10 +46,30 @@ async def stream_video(job_id: str, request: Request):
 async def download_video(job_id: str):
     video_file = _video_path(job_id)
     if not video_file.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
+        raise HTTPException(status_code=404, detail=f"Video not found: {video_file}")
     return FileResponse(
         path=str(video_file),
         media_type="video/mp4",
         filename=f"animashort_{job_id[:8]}.mp4",
-        headers={"Accept-Ranges": "bytes"},
     )
+
+
+@router.get("/debug/{job_id}")
+async def debug_job(job_id: str):
+    """Diagnostic endpoint — shows what files exist for a job."""
+    job_dir = OUTPUT_DIR / job_id
+    video_file = job_dir / "final_short.mp4"
+    files = []
+    if job_dir.exists():
+        files = [
+            {"name": f.name, "size_kb": round(f.stat().st_size / 1024, 1)}
+            for f in sorted(job_dir.iterdir())
+        ]
+    return {
+        "job_id": job_id,
+        "output_dir": str(OUTPUT_DIR),
+        "job_dir_exists": job_dir.exists(),
+        "video_exists": video_file.exists(),
+        "video_size_kb": round(video_file.stat().st_size / 1024, 1) if video_file.exists() else 0,
+        "files": files,
+    }
